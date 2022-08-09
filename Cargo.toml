@@ -6,7 +6,7 @@ license = "Apache-2.0 WITH LLVM-exception"
 description = "A writer for object file ar archives"
 keywords = ["ar", "archive"]
 readme = "Readme.md"
-repository = "https://github.com/bjorn3/ar_archive_writer"
+repository = "https://github.com/rust-lang/ar_archive_writer"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
