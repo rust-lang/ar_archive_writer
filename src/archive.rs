@@ -18,3 +18,30 @@ pub enum ArchiveKind {
     Coff,
     AixBig,
 }
+
+pub(crate) mod big_archive {
+    /// Fixed-Length Header.
+    #[repr(C)]
+    pub(crate) struct FixLenHdr {
+        /// Big archive magic string.
+        magic: [u8; 8],
+
+        /// Offset to member table.
+        mem_offset: [u8; 20],
+
+        /// Offset to global symbol table.
+        glob_sym_offset: [u8; 20],
+
+        /// Offset global symbol table for 64-bit objects.
+        glob_sym64_offset: [u8; 20],
+
+        /// Offset to first archive member.
+        first_child_offset: [u8; 20],
+
+        /// Offset to last archive member.
+        last_child_offset: [u8; 20],
+
+        /// Offset to first mem on free list.
+        free_offset: [u8; 20],
+    }
+}

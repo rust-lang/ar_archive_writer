@@ -31,11 +31,15 @@ fn is_darwin(kind: ArchiveKind) -> bool {
     matches!(kind, ArchiveKind::Darwin | ArchiveKind::Darwin64)
 }
 
+fn is_aix_big_archive(kind: ArchiveKind) -> bool {
+    kind == ArchiveKind::AixBig
+}
+
 fn is_bsd_like(kind: ArchiveKind) -> bool {
     match kind {
-        ArchiveKind::Gnu | ArchiveKind::Gnu64 => false,
+        ArchiveKind::Gnu | ArchiveKind::Gnu64 | ArchiveKind::AixBig => false,
         ArchiveKind::Bsd | ArchiveKind::Darwin | ArchiveKind::Darwin64 => true,
-        ArchiveKind::Coff | ArchiveKind::AixBig => panic!("not supported for writing"),
+        ArchiveKind::Coff => panic!("not supported for writing"),
     }
 }
 
@@ -98,18 +102,51 @@ fn print_bsd_member_header<W: Write>(
     )
 }
 
+fn print_big_archive_member_header<W: Write>(
+    w: &mut W,
+    name: &str,
+    mtime: u64,
+    uid: u32,
+    gid: u32,
+    perms: u32,
+    size: u64,
+    prev_offset: u64,
+    next_offset: u64,
+) -> io::Result<()> {
+    write!(
+        w,
+        "{:<20}{:<20}{:<20}{:<12}{:<12}{:<12}{:12o}{:<4}",
+        size,
+        next_offset,
+        prev_offset,
+        mtime,
+        u64::from(uid) % 1000000000000u64,
+        u64::from(gid) % 1000000000000u64,
+        perms,
+        name.len(),
+    )?;
+
+    if !name.is_empty() {
+        write!(w, "{}", name)?;
+
+        if name.len() % 2 != 0 {
+            write!(w, "\0")?;
+        }
+    }
+
+    write!(w, "`\n")?;
+
+    Ok(())
+}
+
 fn use_string_table(thin: bool, name: &str) -> bool {
     thin || name.len() >= 16 || name.contains('/')
 }
 
 fn is_64bit_kind(kind: ArchiveKind) -> bool {
     match kind {
-        ArchiveKind::Gnu
-        | ArchiveKind::Bsd
-        | ArchiveKind::Darwin
-        | ArchiveKind::Coff
-        | ArchiveKind::AixBig => false,
-        ArchiveKind::Darwin64 | ArchiveKind::Gnu64 => true,
+        ArchiveKind::Gnu | ArchiveKind::Bsd | ArchiveKind::Darwin | ArchiveKind::Coff => false,
+        ArchiveKind::AixBig | ArchiveKind::Darwin64 | ArchiveKind::Gnu64 => true,
     }
 }
 
@@ -244,7 +281,11 @@ fn compute_symbol_table_size_and_pad(
     // least 4-byte aligned for 32-bit content.  Opt for the larger encoding
     // uniformly.
     // We do this for all bsd formats because it simplifies aligning members.
-    let pad = offset_to_alignment(size, if is_bsd_like(kind) { 8 } else { 2 });
+    let pad = if is_aix_big_archive(kind) {
+        0
+    } else {
+        offset_to_alignment(size, if is_bsd_like(kind) { 8 } else { 2 })
+    };
     size += pad;
     (size, pad)
 }
@@ -254,6 +295,7 @@ fn write_symbol_table_header<W: Write + Seek>(
     kind: ArchiveKind,
     deterministic: bool,
     size: u64,
+    prev_member_offset: u64,
 ) -> io::Result<()> {
     if is_bsd_like(kind) {
         let name = if is_64bit_kind(kind) {
@@ -263,6 +305,18 @@ fn write_symbol_table_header<W: Write + Seek>(
         };
         let pos = w.stream_position()?;
         print_bsd_member_header(w, pos, name, now(deterministic), 0, 0, 0, size)
+    } else if is_aix_big_archive(kind) {
+        print_big_archive_member_header(
+            w,
+            "",
+            now(deterministic),
+            0,
+            0,
+            0,
+            size,
+            prev_member_offset,
+            0,
+        )
     } else {
         let name = if is_64bit_kind(kind) { "/SYM64" } else { "" };
         print_gnu_small_member_header(w, name.to_string(), now(deterministic), 0, 0, 0, size)
@@ -275,6 +329,7 @@ fn write_symbol_table<W: Write + Seek>(
     deterministic: bool,
     members: &[MemberData<'_>],
     string_table: &[u8],
+    prev_member_offset: u64,
 ) -> io::Result<()> {
     // We don't write a symbol table on an archive with no members -- except on
     // Darwin, where the linker will abort unless the archive has a symbol table.
@@ -286,9 +341,13 @@ fn write_symbol_table<W: Write + Seek>(
 
     let offset_size = if is_64bit_kind(kind) { 8 } else { 4 };
     let (size, pad) = compute_symbol_table_size_and_pad(kind, num_syms, offset_size, string_table);
-    write_symbol_table_header(w, kind, deterministic, size)?;
+    write_symbol_table_header(w, kind, deterministic, size, prev_member_offset)?;
 
-    let mut pos = w.stream_position()? + size;
+    let mut pos = if is_aix_big_archive(kind) {
+        u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>()).unwrap()
+    } else {
+        w.stream_position()? + size
+    };
 
     if is_bsd_like(kind) {
         print_n_bits(w, kind, num_syms * 2 * offset_size)?;
@@ -371,7 +430,11 @@ fn compute_member_data<'a, S: Write + Seek>(
 
     // This ignores the symbol table, but we only need the value mod 8 and the
     // symbol table is aligned to be a multiple of 8 bytes
-    let mut pos = 0;
+    let mut pos = if is_aix_big_archive(kind) {
+        u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>()).unwrap()
+    } else {
+        0
+    };
 
     let mut ret = vec![];
     let mut has_object = false;
@@ -435,6 +498,9 @@ fn compute_member_data<'a, S: Write + Seek>(
         }
     }
 
+    // The big archive format needs to know the offset of the previous member
+    // header.
+    let mut prev_offset = 0;
     for m in new_members {
         let mut header = Vec::new();
 
@@ -469,17 +535,36 @@ fn compute_member_data<'a, S: Write + Seek>(
             ));
         }
 
-        print_member_header(
-            &mut header,
-            pos,
-            string_table,
-            &mut member_names,
-            kind,
-            thin,
-            m,
-            mtime,
-            size,
-        )?;
+        if is_aix_big_archive(kind) {
+            let next_offset = pos
+                + u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>()).unwrap()
+                + align_to(u64::try_from(m.member_name.len()).unwrap(), 2)
+                + align_to(size, 2);
+            print_big_archive_member_header(
+                &mut header,
+                &m.member_name,
+                mtime,
+                m.uid,
+                m.gid,
+                m.perms,
+                size,
+                prev_offset,
+                next_offset,
+            )?;
+            prev_offset = pos;
+        } else {
+            print_member_header(
+                &mut header,
+                pos,
+                string_table,
+                &mut member_names,
+                kind,
+                thin,
+                m,
+                mtime,
+                size,
+            )?;
+        }
 
         let symbols = if need_symbols {
             write_symbols(data, m.get_symbols, sym_names, &mut has_object)?
@@ -535,29 +620,36 @@ pub fn write_archive_to_stream<W: Write + Seek>(
     let sym_names = sym_names.into_inner();
 
     let string_table = string_table.into_inner();
-    if !string_table.is_empty() {
+    if !string_table.is_empty() && !is_aix_big_archive(kind) {
         data.insert(0, compute_string_table(&string_table));
     }
 
     // We would like to detect if we need to switch to a 64-bit symbol table.
-    if write_symtab {
-        let mut max_offset = 8; // For the file signature
-        let mut last_offset = max_offset;
-        let mut num_syms = 0;
-        for m in &data {
-            // Record the start of the member's offset
-            last_offset = max_offset;
-            // Account for the size of each part associated with the member.
-            max_offset += u64::try_from(m.header.len() + m.data.len() + m.padding.len()).unwrap();
-            num_syms += u64::try_from(m.symbols.len()).unwrap();
-        }
+    let mut last_member_end_offset = if is_aix_big_archive(kind) {
+        u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>()).unwrap()
+    } else {
+        8
+    };
+    let mut last_member_header_offset = last_member_end_offset;
+    let mut num_syms = 0;
+    for m in &data {
+        // Record the start of the member's offset
+        last_member_header_offset = last_member_end_offset;
+        // Account for the size of each part associated with the member.
+        last_member_end_offset +=
+            u64::try_from(m.header.len() + m.data.len() + m.padding.len()).unwrap();
+        num_syms += u64::try_from(m.symbols.len()).unwrap();
+    }
 
+    // The symbol table is put at the end of the big archive file. The symbol
+    // table is at the start of the archive file for other archive formats.
+    if write_symtab && !is_aix_big_archive(kind) {
         // We assume 32-bit offsets to see if 32-bit symbols are possible or not.
         let (symtab_size, _pad) = compute_symbol_table_size_and_pad(kind, num_syms, 4, &sym_names);
-        last_offset += {
+        last_member_header_offset += {
             // FIXME avoid allocating memory here
             let mut tmp = Cursor::new(vec![]);
-            write_symbol_table_header(&mut tmp, kind, deterministic, symtab_size).unwrap();
+            write_symbol_table_header(&mut tmp, kind, deterministic, symtab_size, 0).unwrap();
             u64::try_from(tmp.into_inner().len()).unwrap()
         } + symtab_size;
 
@@ -571,10 +663,10 @@ pub fn write_archive_to_stream<W: Write + Seek>(
         // FIXME allow lowering the threshold for tests
         const SYM64_THRESHOLD: u64 = 1 << 32;
 
-        // If LastOffset isn't going to fit in a 32-bit varible we need to switch
-        // to 64-bit. Note that the file can be larger than 4GB as long as the last
-        // member starts before the 4GB offset.
-        if last_offset >= SYM64_THRESHOLD {
+        // If LastMemberHeaderOffset isn't going to fit in a 32-bit varible we need
+        // to switch to 64-bit. Note that the file can be larger than 4GB as long as
+        // the last member starts before the 4GB offset.
+        if last_member_header_offset >= SYM64_THRESHOLD {
             if kind == ArchiveKind::Darwin {
                 kind = ArchiveKind::Darwin64;
             } else {
@@ -585,18 +677,154 @@ pub fn write_archive_to_stream<W: Write + Seek>(
 
     if thin {
         write!(w, "!<thin>\n")?;
+    } else if is_aix_big_archive(kind) {
+        write!(w, "<bigaf>\n")?;
     } else {
         write!(w, "!<arch>\n")?;
     }
 
-    if write_symtab {
-        write_symbol_table(w, kind, deterministic, &data, &sym_names)?;
-    }
+    if !is_aix_big_archive(kind) {
+        if write_symtab {
+            write_symbol_table(w, kind, deterministic, &data, &sym_names, 0)?;
+        }
 
-    for m in data {
-        w.write_all(&m.header)?;
-        w.write_all(m.data)?;
-        w.write_all(m.padding)?;
+        for m in data {
+            w.write_all(&m.header)?;
+            w.write_all(m.data)?;
+            w.write_all(m.padding)?;
+        }
+    } else {
+        // For the big archive (AIX) format, compute a table of member names and
+        // offsets, used in the member table.
+        let mut member_table_name_str_tbl_size = 0;
+        let mut member_offsets = vec![];
+        let mut member_names = vec![];
+
+        // Loop across object to find offset and names.
+        let mut member_end_offset =
+            u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>()).unwrap();
+        for i in 0..new_members.len() {
+            let member = &new_members[i];
+            member_table_name_str_tbl_size += member.member_name.len() + 1;
+            member_offsets.push(member_end_offset);
+            member_names.push(&member.member_name);
+            // File member name ended with "`\n". The length is included in
+            // BigArMemHdrType.
+            member_end_offset += u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>())
+                .unwrap()
+                + align_to(u64::try_from(data[i].data.len()).unwrap(), 2)
+                + align_to(u64::try_from(member.member_name.len()).unwrap(), 2);
+        }
+
+        // AIX member table size.
+        let member_table_size =
+            u64::try_from(20 + 20 * member_offsets.len() + member_table_name_str_tbl_size).unwrap();
+
+        let global_symbol_offset = if write_symtab && num_syms > 0 {
+            last_member_end_offset
+                + align_to(
+                    u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>()).unwrap()
+                        + member_table_size,
+                    2,
+                )
+        } else {
+            0
+        };
+
+        // Fixed Sized Header.
+        // Offset to member table
+        write!(
+            w,
+            "{:<20}",
+            if !new_members.is_empty() {
+                last_member_end_offset
+            } else {
+                0
+            }
+        )?;
+        // If there are no file members in the archive, there will be no global
+        // symbol table.
+        write!(
+            w,
+            "{:<20}",
+            if !new_members.is_empty() {
+                global_symbol_offset
+            } else {
+                0
+            }
+        )?;
+        // Offset to 64 bits global symbol table - Not supported yet
+        write!(w, "{:<20}", 0)?;
+        // Offset to first archive member
+        write!(
+            w,
+            "{:<20}",
+            if !new_members.is_empty() {
+                u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>()).unwrap()
+            } else {
+                0
+            }
+        )?;
+        // Offset to last archive member
+        write!(
+            w,
+            "{:<20}",
+            if !new_members.is_empty() {
+                last_member_header_offset
+            } else {
+                0
+            }
+        )?;
+        // Offset to first member of free list - Not supported yet
+        write!(w, "{:<20}", 0)?;
+
+        for m in &data {
+            w.write_all(&m.header)?;
+            w.write_all(m.data)?;
+            if m.data.len() % 2 != 0 {
+                w.write_all(&[0])?;
+            }
+        }
+
+        if !new_members.is_empty() {
+            // Member table.
+            print_big_archive_member_header(
+                w,
+                "",
+                0,
+                0,
+                0,
+                0,
+                member_table_size,
+                last_member_header_offset,
+                global_symbol_offset,
+            )?;
+            write!(w, "{:<20}", member_offsets.len())?; // Number of members
+            for member_offset in member_offsets {
+                write!(w, "{:<20}", member_offset)?;
+            }
+            for member_name in member_names {
+                w.write_all(member_name.as_bytes())?;
+                w.write_all(&[0])?;
+            }
+
+            if member_table_name_str_tbl_size % 2 != 0 {
+                // Name table must be tail padded to an even number of
+                // bytes.
+                w.write_all(&[0])?;
+            }
+
+            if write_symtab && num_syms > 0 {
+                write_symbol_table(
+                    w,
+                    kind,
+                    deterministic,
+                    &data,
+                    &sym_names,
+                    last_member_end_offset,
+                )?;
+            }
+        }
     }
 
     w.flush()
