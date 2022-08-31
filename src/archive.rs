@@ -20,6 +20,30 @@ pub enum ArchiveKind {
 }
 
 pub(crate) mod big_archive {
+    #[repr(C)]
+    pub(crate) struct BigArMemHdrType {
+        /// File member size in decimal
+        size: [u8; 20],
+
+        /// Next member offset in decimal
+        next_offset: [u8; 20],
+
+        /// Previous member offset in decimal
+        prev_offset: [u8; 20],
+
+        last_modified: [u8; 12],
+
+        uid: [u8; 12],
+        gid: [u8; 12],
+
+        access_mode: [u8; 12],
+
+        /// File member name length in decimal
+        name_len: [u8; 4],
+
+        terminator: [u8; 2],
+    }
+
     /// Fixed-Length Header.
     #[repr(C)]
     pub(crate) struct FixLenHdr {

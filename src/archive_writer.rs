@@ -115,7 +115,7 @@ fn print_big_archive_member_header<W: Write>(
 ) -> io::Result<()> {
     write!(
         w,
-        "{:<20}{:<20}{:<20}{:<12}{:<12}{:<12}{:12o}{:<4}",
+        "{:<20}{:<20}{:<20}{:<12}{:<12}{:<12}{:<12o}{:<4}",
         size,
         next_offset,
         prev_offset,
@@ -537,7 +537,7 @@ fn compute_member_data<'a, S: Write + Seek>(
 
         if is_aix_big_archive(kind) {
             let next_offset = pos
-                + u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>()).unwrap()
+                + u64::try_from(std::mem::size_of::<big_archive::BigArMemHdrType>()).unwrap()
                 + align_to(u64::try_from(m.member_name.len()).unwrap(), 2)
                 + align_to(size, 2);
             print_big_archive_member_header(
@@ -710,7 +710,7 @@ pub fn write_archive_to_stream<W: Write + Seek>(
             member_names.push(&member.member_name);
             // File member name ended with "`\n". The length is included in
             // BigArMemHdrType.
-            member_end_offset += u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>())
+            member_end_offset += u64::try_from(std::mem::size_of::<big_archive::BigArMemHdrType>())
                 .unwrap()
                 + align_to(u64::try_from(data[i].data.len()).unwrap(), 2)
                 + align_to(u64::try_from(member.member_name.len()).unwrap(), 2);
@@ -723,7 +723,7 @@ pub fn write_archive_to_stream<W: Write + Seek>(
         let global_symbol_offset = if write_symtab && num_syms > 0 {
             last_member_end_offset
                 + align_to(
-                    u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>()).unwrap()
+                    u64::try_from(std::mem::size_of::<big_archive::BigArMemHdrType>()).unwrap()
                         + member_table_size,
                     2,
                 )
