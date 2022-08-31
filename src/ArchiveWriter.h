@@ -1,4 +1,4 @@
-// Copied from https://github.com/llvm/llvm-project/blob/8ef3e895ad8ab1724e2b87cabad1dacdc7a397a3/llvm/include/llvm/Object/ArchiveWriter.h
+// Copied from https://github.com/llvm/llvm-project/blob/3d3ef9d073e1e27ea57480b371b7f5a9f5642ed2/llvm/include/llvm/Object/ArchiveWriter.h
 
 //===- ArchiveWriter.h - ar archive file format writer ----------*- C++ -*-===//
 //
@@ -27,6 +27,11 @@ struct NewArchiveMember {
 
   NewArchiveMember() = default;
   NewArchiveMember(MemoryBufferRef BufRef);
+
+  // Detect the archive format from the object or bitcode file. This helps
+  // assume the archive format when creating or editing archives in the case
+  // one isn't explicitly set.
+  object::Archive::Kind detectKindFromObject() const;
 
   static Expected<NewArchiveMember>
   getOldMember(const object::Archive::Child &OldMember, bool Deterministic);
