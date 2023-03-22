@@ -408,12 +408,17 @@ fn write_symbols(
     has_object: &mut bool,
 ) -> io::Result<Vec<u64>> {
     let mut ret = vec![];
-    *has_object = get_symbols(buf, &mut |sym| {
+    // We only set has_object if get_symbols determines it's looking at an
+    // object file. This is because if we're creating an rlib, the archive will
+    // always end in lib.rmeta, and cause has_object to always become false.
+    if get_symbols(buf, &mut |sym| {
         ret.push(sym_names.stream_position()?);
         sym_names.write_all(sym)?;
         sym_names.write_all(&[0])?;
         Ok(())
-    })?;
+    })? {
+        *has_object = true;
+    }
     Ok(ret)
 }
 
