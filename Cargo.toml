@@ -11,4 +11,4 @@ repository = "https://github.com/rust-lang/ar_archive_writer"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-object = { version = "0.30.0", default-features = false, features = ["std", "read"] }
+object = { version = "0.31.0", default-features = false, features = ["std", "read"] }
