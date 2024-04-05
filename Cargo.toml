@@ -12,3 +12,8 @@ repository = "https://github.com/rust-lang/ar_archive_writer"
 
 [dependencies]
 object = { version = "0.32.0", default-features = false, features = ["std", "read"] }
+
+[dev-dependencies]
+cargo-binutils = "0.3.6"
+object = { version = "0.32.0", default-features = false, features = ["write", "xcoff"] }
+pretty_assertions = "1.4.0"
