@@ -1,12 +1,7 @@
 // Derived from object's round_trip.rs:
 // https://github.com/gimli-rs/object/blob/0.32.0/tests/round_trip/mod.rs
 
-use std::io::Cursor;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::{env, fs};
-
-use ar_archive_writer::{ArchiveKind, NewArchiveMember};
+use ar_archive_writer::ArchiveKind;
 use object::{read, write};
 use object::{
     Architecture, BinaryFormat, Endianness, RelocationEncoding, RelocationKind, SymbolFlags,
@@ -14,29 +9,7 @@ use object::{
 };
 use pretty_assertions::assert_eq;
 
-fn run_llvm_ar(object_path: &Path, archive_path: &Path, archive_kind: ArchiveKind) {
-    let ar_path = cargo_binutils::Tool::Ar.path().unwrap();
-
-    let format_arg = match archive_kind {
-        ArchiveKind::Gnu => "gnu",
-        ArchiveKind::Darwin => "darwin",
-        ArchiveKind::AixBig => "bigarchive",
-        _ => panic!("unsupported archive kind: {:?}", archive_kind),
-    };
-
-    let output = Command::new(ar_path)
-        .arg(format!("--format={}", format_arg))
-        .arg("rcs")
-        .arg(archive_path)
-        .arg(object_path)
-        .output()
-        .unwrap();
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        "",
-        "llvm-ar failed. archive: {archive_path:?}. input: {object_path:?}"
-    );
-}
+mod common;
 
 fn round_trip_and_diff(
     test_name: &str,
@@ -44,32 +17,15 @@ fn round_trip_and_diff(
     archive_kind: ArchiveKind,
     trim_output_bytes: usize,
 ) {
+    let tmpdir = common::create_tmp_dir(test_name);
     let input_bytes = object.write().unwrap();
 
     // Create a new archive using ar_archive_writer.
-    let output_archive_bytes = {
-        let input_member = NewArchiveMember {
-            buf: Box::new(&input_bytes) as Box<dyn AsRef<[u8]>>,
-            get_symbols: ar_archive_writer::get_native_object_symbols,
-            member_name: "input.o".to_string(),
-            mtime: 0,
-            uid: 0,
-            gid: 0,
-            perms: 0o644,
-        };
-        let mut output_bytes = Cursor::new(Vec::new());
-        ar_archive_writer::write_archive_to_stream(
-            &mut output_bytes,
-            &[input_member],
-            true,
-            archive_kind,
-            true,
-            false,
-        )
-        .unwrap();
-
-        output_bytes.into_inner()
-    };
+    let output_archive_bytes = common::create_archive_with_ar_archive_writer(
+        &tmpdir,
+        archive_kind,
+        [("input.o", input_bytes.as_slice())],
+    );
 
     // Read the archive and member using object and diff with original data.
     {
@@ -90,33 +46,16 @@ fn round_trip_and_diff(
     }
 
     // Use llvm-ar to create the archive and diff with ar_archive_writer.
-    {
-        let tmpdir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(test_name);
-        match fs::remove_dir_all(&tmpdir) {
-            Ok(_) => {}
-            Err(err) => {
-                if err.kind() != std::io::ErrorKind::NotFound {
-                    panic!("Failed to delete directory: {:?}", tmpdir);
-                }
-            }
-        }
-        fs::create_dir_all(&tmpdir).unwrap();
-        let input_file_path = tmpdir.join("input.o");
-        let archive_file_path = tmpdir.join("output.a");
-        let ar_archive_writer_file_path = tmpdir.join("output_ar_writer.a");
-
-        fs::write(&input_file_path, &input_bytes).unwrap();
-
-        run_llvm_ar(&input_file_path, &archive_file_path, archive_kind);
-        let output_llvm_ar_bytes = fs::read(archive_file_path).unwrap();
-
-        fs::write(&ar_archive_writer_file_path, &output_archive_bytes).unwrap();
-        assert_eq!(
-            output_archive_bytes, output_llvm_ar_bytes,
-            "Comparing ar_archive_writer to llvm-ar. Test case: build {:?} for {:?}",
-            archive_kind, object
-        );
-    }
+    let output_llvm_ar_bytes = common::create_archive_with_llvm_ar(
+        &tmpdir,
+        archive_kind,
+        [("input.o", input_bytes.as_slice())],
+    );
+    assert_eq!(
+        output_archive_bytes, output_llvm_ar_bytes,
+        "Comparing ar_archive_writer to llvm-ar. Test case: build {:?} for {:?}",
+        archive_kind, object
+    );
 }
 
 #[test]
