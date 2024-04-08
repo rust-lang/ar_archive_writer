@@ -97,15 +97,8 @@ pub fn create_archive_with_ar_archive_writer<'a>(
         })
         .collect::<Vec<_>>();
     let mut output_bytes = Cursor::new(Vec::new());
-    ar_archive_writer::write_archive_to_stream(
-        &mut output_bytes,
-        &members,
-        true,
-        archive_kind,
-        true,
-        false,
-    )
-    .unwrap();
+    ar_archive_writer::write_archive_to_stream(&mut output_bytes, &members, archive_kind, false)
+        .unwrap();
 
     let output_archive_bytes = output_bytes.into_inner();
     let ar_archive_writer_file_path = tmpdir.join("output_ar_archive_writer.a");
