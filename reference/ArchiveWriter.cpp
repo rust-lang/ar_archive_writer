@@ -1,5 +1,3 @@
-// Copied from https://github.com/llvm/llvm-project/blob/3d3ef9d073e1e27ea57480b371b7f5a9f5642ed2/llvm/lib/Object/ArchiveWriter.cpp
-
 //===- ArchiveWriter.cpp - ar File Format implementation --------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.

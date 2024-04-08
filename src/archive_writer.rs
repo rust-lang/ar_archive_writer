@@ -5,10 +5,6 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-// Derived from:
-// * https://github.com/llvm/llvm-project/blob/3d3ef9d073e1e27ea57480b371b7f5a9f5642ed2/llvm/include/llvm/Object/ArchiveWriter.h
-// * https://github.com/llvm/llvm-project/blob/3d3ef9d073e1e27ea57480b371b7f5a9f5642ed2/llvm/lib/Object/ArchiveWriter.cpp
-
 use std::collections::HashMap;
 use std::io::{self, Cursor, Seek, Write};
 
