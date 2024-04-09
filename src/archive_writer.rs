@@ -490,7 +490,8 @@ fn compute_member_data<'a, S: Write + Seek>(
     for m in new_members {
         let mut header = Vec::new();
 
-        let data: &[u8] = if thin { &[][..] } else { (*m.buf).as_ref() };
+        let buf = m.buf.as_ref().as_ref();
+        let data = if thin { &[][..] } else { buf };
 
         // ld64 expects the members to be 8-byte aligned for 64-bit content and at
         // least 4-byte aligned for 32-bit content.  Opt for the larger encoding
@@ -513,7 +514,7 @@ fn compute_member_data<'a, S: Write + Seek>(
             m.mtime
         };
 
-        let size = u64::try_from(data.len()).unwrap() + member_padding;
+        let size = u64::try_from(buf.len()).unwrap() + member_padding;
         if size > MAX_MEMBER_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -552,7 +553,7 @@ fn compute_member_data<'a, S: Write + Seek>(
             )?;
         }
 
-        let symbols = write_symbols(data, m.get_symbols, sym_names, &mut has_object)?;
+        let symbols = write_symbols(buf, m.get_symbols, sym_names, &mut has_object)?;
 
         pos += u64::try_from(header.len() + data.len() + padding.len()).unwrap();
         ret.push(MemberData {

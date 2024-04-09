@@ -25,6 +25,7 @@ fn round_trip_and_diff(
         &tmpdir,
         archive_kind,
         [("input.o", input_bytes.as_slice())],
+        false,
     );
 
     // Read the archive and member using object and diff with original data.
@@ -50,6 +51,7 @@ fn round_trip_and_diff(
         &tmpdir,
         archive_kind,
         [("input.o", input_bytes.as_slice())],
+        false,
     );
     assert_eq!(
         output_archive_bytes, output_llvm_ar_bytes,
