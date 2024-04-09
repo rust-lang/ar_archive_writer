@@ -25,8 +25,15 @@ pub fn create_tmp_dir(test_name: &str) -> PathBuf {
     tmpdir
 }
 
-fn run_llvm_ar(object_paths: &[PathBuf], archive_path: &Path, archive_kind: ArchiveKind) {
+fn run_llvm_ar(
+    object_paths: &[PathBuf],
+    archive_path: &Path,
+    archive_kind: ArchiveKind,
+    thin: bool,
+) {
     let ar_path = cargo_binutils::Tool::Ar.path().unwrap();
+
+    let mut command = Command::new(ar_path);
 
     let format_arg = match archive_kind {
         ArchiveKind::Gnu => "gnu",
@@ -34,9 +41,13 @@ fn run_llvm_ar(object_paths: &[PathBuf], archive_path: &Path, archive_kind: Arch
         ArchiveKind::AixBig => "bigarchive",
         _ => panic!("unsupported archive kind: {:?}", archive_kind),
     };
+    command.arg(format!("--format={}", format_arg));
 
-    let output = Command::new(ar_path)
-        .arg(format!("--format={}", format_arg))
+    if thin {
+        command.arg("--thin");
+    }
+
+    let output = command
         .arg("rcs")
         .arg(archive_path)
         .args(object_paths)
@@ -55,6 +66,7 @@ pub fn create_archive_with_llvm_ar<'a>(
     tmpdir: &Path,
     archive_kind: ArchiveKind,
     input_objects: impl IntoIterator<Item = (&'static str, &'a [u8])>,
+    thin: bool,
 ) -> Vec<u8> {
     let archive_file_path = tmpdir.join("output_llvm_ar.a");
 
@@ -70,7 +82,7 @@ pub fn create_archive_with_llvm_ar<'a>(
         })
         .collect::<Vec<_>>();
 
-    run_llvm_ar(&input_file_paths, &archive_file_path, archive_kind);
+    run_llvm_ar(&input_file_paths, &archive_file_path, archive_kind, thin);
     fs::read(archive_file_path).unwrap()
 }
 
@@ -80,24 +92,37 @@ pub fn create_archive_with_ar_archive_writer<'a>(
     tmpdir: &Path,
     archive_kind: ArchiveKind,
     input_objects: impl IntoIterator<Item = (&'static str, &'a [u8])>,
+    thin: bool,
 ) -> Vec<u8> {
     let members = input_objects
         .into_iter()
-        .map(|(name, bytes)| NewArchiveMember {
-            buf: Box::new(bytes) as Box<dyn AsRef<[u8]>>,
-            get_symbols: ar_archive_writer::get_native_object_symbols,
-            member_name: name
-                .rsplit_once('/')
-                .map_or(name, |(_, filename)| filename)
-                .to_string(),
-            mtime: 0,
-            uid: 0,
-            gid: 0,
-            perms: 0o644,
+        .map(|(name, bytes)| {
+            let member_name = if thin {
+                // Thin archives use the full path to the object file.
+                tmpdir
+                    .join(name)
+                    .to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/")
+            } else {
+                // Non-thin archives use the file name only.
+                name.rsplit_once('/')
+                    .map_or(name, |(_, filename)| filename)
+                    .to_string()
+            };
+
+            NewArchiveMember {
+                buf: Box::new(bytes) as Box<dyn AsRef<[u8]>>,
+                get_symbols: ar_archive_writer::get_native_object_symbols,
+                member_name,
+                mtime: 0,
+                uid: 0,
+                gid: 0,
+                perms: 0o644,
+            }
         })
         .collect::<Vec<_>>();
     let mut output_bytes = Cursor::new(Vec::new());
-    ar_archive_writer::write_archive_to_stream(&mut output_bytes, &members, archive_kind, false)
+    ar_archive_writer::write_archive_to_stream(&mut output_bytes, &members, archive_kind, thin)
         .unwrap();
 
     let output_archive_bytes = output_bytes.into_inner();
@@ -112,25 +137,50 @@ pub fn generate_archive_and_compare<F>(test_name: &str, generate_objects: F)
 where
     F: Fn(Architecture, Endianness, BinaryFormat) -> Vec<(&'static str, Vec<u8>)>,
 {
-    for (architecture, endianness, binary_format, archive_kind) in [
-        // Elf + GNU
+    for (architecture, endianness, binary_format, archive_kind, thin) in [
+        // Elf + GNU + non-thin
         (
             Architecture::X86_64,
             Endianness::Little,
             BinaryFormat::Elf,
             ArchiveKind::Gnu,
+            false,
         ),
         (
             Architecture::I386,
             Endianness::Little,
             BinaryFormat::Elf,
             ArchiveKind::Gnu,
+            false,
         ),
         (
             Architecture::Aarch64,
             Endianness::Little,
             BinaryFormat::Elf,
             ArchiveKind::Gnu,
+            false,
+        ),
+        // Elf + GNU + thin
+        (
+            Architecture::X86_64,
+            Endianness::Little,
+            BinaryFormat::Elf,
+            ArchiveKind::Gnu,
+            true,
+        ),
+        (
+            Architecture::I386,
+            Endianness::Little,
+            BinaryFormat::Elf,
+            ArchiveKind::Gnu,
+            true,
+        ),
+        (
+            Architecture::Aarch64,
+            Endianness::Little,
+            BinaryFormat::Elf,
+            ArchiveKind::Gnu,
+            true,
         ),
         // AIX Big
         (
@@ -138,6 +188,7 @@ where
             Endianness::Big,
             BinaryFormat::Elf,
             ArchiveKind::AixBig,
+            false,
         ),
         // PE + GNU
         (
@@ -145,12 +196,14 @@ where
             Endianness::Little,
             BinaryFormat::Coff,
             ArchiveKind::Gnu,
+            false,
         ),
         (
             Architecture::I386,
             Endianness::Little,
             BinaryFormat::Coff,
             ArchiveKind::Gnu,
+            false,
         ),
         // MachO
         (
@@ -158,12 +211,14 @@ where
             Endianness::Little,
             BinaryFormat::MachO,
             ArchiveKind::Darwin,
+            false,
         ),
         (
             Architecture::Aarch64,
             Endianness::Little,
             BinaryFormat::MachO,
             ArchiveKind::Darwin,
+            false,
         ),
     ] {
         let tmpdir = create_tmp_dir(test_name);
@@ -174,6 +229,7 @@ where
             input_objects
                 .iter()
                 .map(|(name, bytes)| (*name, bytes.as_slice())),
+            thin,
         );
         let ar_archive_writer_archive = create_archive_with_ar_archive_writer(
             &tmpdir,
@@ -181,11 +237,12 @@ where
             input_objects
                 .iter()
                 .map(|(name, bytes)| (*name, bytes.as_slice())),
+            thin,
         );
 
         assert_eq!(
             llvm_ar_archive, ar_archive_writer_archive,
-            "Archives differ for architecture: {architecture:?}, binary_format: {binary_format:?}, archive_kind: {archive_kind:?}",
+            "Archives differ for architecture: {architecture:?}, binary_format: {binary_format:?}, archive_kind: {archive_kind:?}, thin: {thin}",
         );
     }
 }
