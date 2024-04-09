@@ -217,10 +217,7 @@ fn compute_string_table(names: &[u8]) -> MemberData<'_> {
     }
 }
 
-fn now(deterministic: bool) -> u64 {
-    if !deterministic {
-        todo!("non deterministic mode is not yet supported"); // FIXME
-    }
+const fn now() -> u64 {
     0
 }
 
@@ -293,7 +290,6 @@ fn compute_symbol_table_size_and_pad(
 fn write_symbol_table_header<W: Write + Seek>(
     w: &mut W,
     kind: ArchiveKind,
-    deterministic: bool,
     size: u64,
     prev_member_offset: u64,
 ) -> io::Result<()> {
@@ -304,29 +300,18 @@ fn write_symbol_table_header<W: Write + Seek>(
             "__.SYMDEF"
         };
         let pos = w.stream_position()?;
-        print_bsd_member_header(w, pos, name, now(deterministic), 0, 0, 0, size)
+        print_bsd_member_header(w, pos, name, now(), 0, 0, 0, size)
     } else if is_aix_big_archive(kind) {
-        print_big_archive_member_header(
-            w,
-            "",
-            now(deterministic),
-            0,
-            0,
-            0,
-            size,
-            prev_member_offset,
-            0,
-        )
+        print_big_archive_member_header(w, "", now(), 0, 0, 0, size, prev_member_offset, 0)
     } else {
         let name = if is_64bit_kind(kind) { "/SYM64" } else { "" };
-        print_gnu_small_member_header(w, name.to_string(), now(deterministic), 0, 0, 0, size)
+        print_gnu_small_member_header(w, name.to_string(), now(), 0, 0, 0, size)
     }
 }
 
 fn write_symbol_table<W: Write + Seek>(
     w: &mut W,
     kind: ArchiveKind,
-    deterministic: bool,
     members: &[MemberData<'_>],
     string_table: &[u8],
     prev_member_offset: u64,
@@ -341,7 +326,7 @@ fn write_symbol_table<W: Write + Seek>(
 
     let offset_size = if is_64bit_kind(kind) { 8 } else { 4 };
     let (size, pad) = compute_symbol_table_size_and_pad(kind, num_syms, offset_size, string_table);
-    write_symbol_table_header(w, kind, deterministic, size, prev_member_offset)?;
+    write_symbol_table_header(w, kind, size, prev_member_offset)?;
 
     let mut pos = if is_aix_big_archive(kind) {
         u64::try_from(std::mem::size_of::<big_archive::FixLenHdr>()).unwrap()
@@ -427,8 +412,6 @@ fn compute_member_data<'a, S: Write + Seek>(
     sym_names: &mut Cursor<Vec<u8>>,
     kind: ArchiveKind,
     thin: bool,
-    deterministic: bool,
-    need_symbols: bool,
     new_members: &'a [NewArchiveMember<'a>],
 ) -> io::Result<Vec<MemberData<'a>>> {
     const PADDING_DATA: &[u8; 8] = &[b'\n'; 8];
@@ -490,7 +473,7 @@ fn compute_member_data<'a, S: Write + Seek>(
     // See also the functions that handle the lookup:
     // in lldb: ObjectContainerBSDArchive::Archive::FindObject()
     // in llvm/tools/dsymutil: BinaryHolder::GetArchiveMemberBuffers().
-    let unique_timestamps = deterministic && is_darwin(kind);
+    let unique_timestamps = is_darwin(kind);
     let mut filename_count = HashMap::new();
     if unique_timestamps {
         for m in new_members {
@@ -569,11 +552,7 @@ fn compute_member_data<'a, S: Write + Seek>(
             )?;
         }
 
-        let symbols = if need_symbols {
-            write_symbols(data, m.get_symbols, sym_names, &mut has_object)?
-        } else {
-            vec![]
-        };
+        let symbols = write_symbols(data, m.get_symbols, sym_names, &mut has_object)?;
 
         pos += u64::try_from(header.len() + data.len() + padding.len()).unwrap();
         ret.push(MemberData {
@@ -597,9 +576,7 @@ fn compute_member_data<'a, S: Write + Seek>(
 pub fn write_archive_to_stream<W: Write + Seek>(
     w: &mut W,
     new_members: &[NewArchiveMember<'_>],
-    write_symtab: bool,
     mut kind: ArchiveKind,
-    deterministic: bool,
     thin: bool,
 ) -> io::Result<()> {
     assert!(
@@ -610,15 +587,7 @@ pub fn write_archive_to_stream<W: Write + Seek>(
     let mut sym_names = Cursor::new(Vec::new());
     let mut string_table = Cursor::new(Vec::new());
 
-    let mut data = compute_member_data(
-        &mut string_table,
-        &mut sym_names,
-        kind,
-        thin,
-        deterministic,
-        write_symtab,
-        new_members,
-    )?;
+    let mut data = compute_member_data(&mut string_table, &mut sym_names, kind, thin, new_members)?;
 
     let sym_names = sym_names.into_inner();
 
@@ -646,13 +615,13 @@ pub fn write_archive_to_stream<W: Write + Seek>(
 
     // The symbol table is put at the end of the big archive file. The symbol
     // table is at the start of the archive file for other archive formats.
-    if write_symtab && !is_aix_big_archive(kind) {
+    if !is_aix_big_archive(kind) {
         // We assume 32-bit offsets to see if 32-bit symbols are possible or not.
         let (symtab_size, _pad) = compute_symbol_table_size_and_pad(kind, num_syms, 4, &sym_names);
         last_member_header_offset += {
             // FIXME avoid allocating memory here
             let mut tmp = Cursor::new(vec![]);
-            write_symbol_table_header(&mut tmp, kind, deterministic, symtab_size, 0).unwrap();
+            write_symbol_table_header(&mut tmp, kind, symtab_size, 0).unwrap();
             u64::try_from(tmp.into_inner().len()).unwrap()
         } + symtab_size;
 
@@ -687,9 +656,7 @@ pub fn write_archive_to_stream<W: Write + Seek>(
     }
 
     if !is_aix_big_archive(kind) {
-        if write_symtab {
-            write_symbol_table(w, kind, deterministic, &data, &sym_names, 0)?;
-        }
+        write_symbol_table(w, kind, &data, &sym_names, 0)?;
 
         for m in data {
             w.write_all(&m.header)?;
@@ -723,7 +690,7 @@ pub fn write_archive_to_stream<W: Write + Seek>(
         let member_table_size =
             u64::try_from(20 + 20 * member_offsets.len() + member_table_name_str_tbl_size).unwrap();
 
-        let global_symbol_offset = if write_symtab && num_syms > 0 {
+        let global_symbol_offset = if num_syms > 0 {
             last_member_end_offset
                 + align_to(
                     u64::try_from(std::mem::size_of::<big_archive::BigArMemHdrType>()).unwrap()
@@ -817,15 +784,8 @@ pub fn write_archive_to_stream<W: Write + Seek>(
                 w.write_all(&[0])?;
             }
 
-            if write_symtab && num_syms > 0 {
-                write_symbol_table(
-                    w,
-                    kind,
-                    deterministic,
-                    &data,
-                    &sym_names,
-                    last_member_end_offset,
-                )?;
+            if num_syms > 0 {
+                write_symbol_table(w, kind, &data, &sym_names, last_member_end_offset)?;
             }
         }
     }
