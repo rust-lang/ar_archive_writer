@@ -7,7 +7,9 @@ use std::process::Command;
 
 use ar_archive_writer::{ArchiveKind, NewArchiveMember};
 use object::write::{self, Object};
-use object::{Architecture, BinaryFormat, Endianness, SymbolFlags, SymbolKind, SymbolScope};
+use object::{
+    Architecture, BinaryFormat, Endianness, SubArchitecture, SymbolFlags, SymbolKind, SymbolScope,
+};
 use pretty_assertions::assert_eq;
 
 /// Creates the temporary directory for a test.
@@ -30,29 +32,56 @@ fn run_llvm_ar(
     archive_path: &Path,
     archive_kind: ArchiveKind,
     thin: bool,
+    is_ec: bool,
 ) {
     let ar_path = cargo_binutils::Tool::Ar.path().unwrap();
 
-    let mut command = Command::new(ar_path);
+    // FIXME: LLVM 19 adds support for "coff" as a format argument, so in the
+    // meantime, we'll instruct llvm-ar to pretend to be llvm-lib.
+    let output = if archive_kind == ArchiveKind::Coff {
+        let lib_path = archive_path.parent().unwrap().join("llvm-lib");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&ar_path, &lib_path).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&ar_path, &lib_path).unwrap();
 
-    let format_arg = match archive_kind {
-        ArchiveKind::Gnu => "gnu",
-        ArchiveKind::Darwin => "darwin",
-        ArchiveKind::AixBig => "bigarchive",
-        _ => panic!("unsupported archive kind: {:?}", archive_kind),
+        let mut command = Command::new(lib_path);
+
+        if is_ec {
+            command.arg("/machine:arm64ec");
+        }
+
+        // llvm-lib reverses the order of the files versus llvm-ar.
+        let mut object_paths = Vec::from(object_paths);
+        object_paths.reverse();
+        command
+            .arg("/OUT:".to_string() + archive_path.to_str().unwrap())
+            .args(object_paths)
+            .output()
+            .unwrap()
+    } else {
+        let mut command = Command::new(ar_path);
+
+        let format_arg = match archive_kind {
+            ArchiveKind::AixBig => "bigarchive",
+            ArchiveKind::Darwin => "darwin",
+            ArchiveKind::Gnu => "gnu",
+            _ => panic!("unsupported archive kind: {:?}", archive_kind),
+        };
+        command.arg(format!("--format={}", format_arg));
+
+        if thin {
+            command.arg("--thin");
+        }
+
+        command
+            .arg("rcs")
+            .arg(archive_path)
+            .args(object_paths)
+            .output()
+            .unwrap()
     };
-    command.arg(format!("--format={}", format_arg));
 
-    if thin {
-        command.arg("--thin");
-    }
-
-    let output = command
-        .arg("rcs")
-        .arg(archive_path)
-        .args(object_paths)
-        .output()
-        .unwrap();
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
         "",
@@ -67,6 +96,7 @@ pub fn create_archive_with_llvm_ar<'a>(
     archive_kind: ArchiveKind,
     input_objects: impl IntoIterator<Item = (&'static str, &'a [u8])>,
     thin: bool,
+    is_ec: bool,
 ) -> Vec<u8> {
     let archive_file_path = tmpdir.join("output_llvm_ar.a");
 
@@ -82,7 +112,13 @@ pub fn create_archive_with_llvm_ar<'a>(
         })
         .collect::<Vec<_>>();
 
-    run_llvm_ar(&input_file_paths, &archive_file_path, archive_kind, thin);
+    run_llvm_ar(
+        &input_file_paths,
+        &archive_file_path,
+        archive_kind,
+        thin,
+        is_ec,
+    );
     fs::read(archive_file_path).unwrap()
 }
 
@@ -93,6 +129,7 @@ pub fn create_archive_with_ar_archive_writer<'a>(
     archive_kind: ArchiveKind,
     input_objects: impl IntoIterator<Item = (&'static str, &'a [u8])>,
     thin: bool,
+    is_ec: bool,
 ) -> Vec<u8> {
     let members = input_objects
         .into_iter()
@@ -103,6 +140,10 @@ pub fn create_archive_with_ar_archive_writer<'a>(
                     .join(name)
                     .to_string_lossy()
                     .replace(std::path::MAIN_SEPARATOR, "/")
+            } else if archive_kind == ArchiveKind::Coff {
+                // For COFF archives, we are running llvm-ar as lib.exe, which
+                // uses the full path to the object file.
+                tmpdir.join(name).to_string_lossy().to_string()
             } else {
                 // Non-thin archives use the file name only.
                 name.rsplit_once('/')
@@ -112,7 +153,7 @@ pub fn create_archive_with_ar_archive_writer<'a>(
 
             NewArchiveMember {
                 buf: Box::new(bytes) as Box<dyn AsRef<[u8]>>,
-                get_symbols: ar_archive_writer::get_native_object_symbols,
+                object_reader: &ar_archive_writer::DEFAULT_OBJECT_READER,
                 member_name,
                 mtime: 0,
                 uid: 0,
@@ -122,12 +163,18 @@ pub fn create_archive_with_ar_archive_writer<'a>(
         })
         .collect::<Vec<_>>();
     let mut output_bytes = Cursor::new(Vec::new());
-    ar_archive_writer::write_archive_to_stream(&mut output_bytes, &members, archive_kind, thin)
-        .unwrap();
+    ar_archive_writer::write_archive_to_stream(
+        &mut output_bytes,
+        &members,
+        archive_kind,
+        thin,
+        is_ec,
+    )
+    .unwrap();
 
     let output_archive_bytes = output_bytes.into_inner();
     let ar_archive_writer_file_path = tmpdir.join("output_ar_archive_writer.a");
-    fs::write(&ar_archive_writer_file_path, &output_archive_bytes).unwrap();
+    fs::write(ar_archive_writer_file_path, &output_archive_bytes).unwrap();
     output_archive_bytes
 }
 
@@ -135,12 +182,18 @@ pub fn create_archive_with_ar_archive_writer<'a>(
 /// across a variety of archive kinds and their relevant object formats.
 pub fn generate_archive_and_compare<F>(test_name: &str, generate_objects: F)
 where
-    F: Fn(Architecture, Endianness, BinaryFormat) -> Vec<(&'static str, Vec<u8>)>,
+    F: Fn(
+        Architecture,
+        Option<SubArchitecture>,
+        Endianness,
+        BinaryFormat,
+    ) -> Vec<(&'static str, Vec<u8>)>,
 {
-    for (architecture, endianness, binary_format, archive_kind, thin) in [
+    for (architecture, subarch, endianness, binary_format, archive_kind, thin) in [
         // Elf + GNU + non-thin
         (
             Architecture::X86_64,
+            None,
             Endianness::Little,
             BinaryFormat::Elf,
             ArchiveKind::Gnu,
@@ -148,6 +201,7 @@ where
         ),
         (
             Architecture::I386,
+            None,
             Endianness::Little,
             BinaryFormat::Elf,
             ArchiveKind::Gnu,
@@ -155,6 +209,7 @@ where
         ),
         (
             Architecture::Aarch64,
+            None,
             Endianness::Little,
             BinaryFormat::Elf,
             ArchiveKind::Gnu,
@@ -163,6 +218,7 @@ where
         // Elf + GNU + thin
         (
             Architecture::X86_64,
+            None,
             Endianness::Little,
             BinaryFormat::Elf,
             ArchiveKind::Gnu,
@@ -170,6 +226,7 @@ where
         ),
         (
             Architecture::I386,
+            None,
             Endianness::Little,
             BinaryFormat::Elf,
             ArchiveKind::Gnu,
@@ -177,6 +234,7 @@ where
         ),
         (
             Architecture::Aarch64,
+            None,
             Endianness::Little,
             BinaryFormat::Elf,
             ArchiveKind::Gnu,
@@ -185,6 +243,7 @@ where
         // AIX Big
         (
             Architecture::PowerPc64,
+            None,
             Endianness::Big,
             BinaryFormat::Elf,
             ArchiveKind::AixBig,
@@ -193,6 +252,7 @@ where
         // PE + GNU
         (
             Architecture::X86_64,
+            None,
             Endianness::Little,
             BinaryFormat::Coff,
             ArchiveKind::Gnu,
@@ -200,14 +260,49 @@ where
         ),
         (
             Architecture::I386,
+            None,
             Endianness::Little,
             BinaryFormat::Coff,
             ArchiveKind::Gnu,
             false,
         ),
+        // PE + Coff
+        (
+            Architecture::X86_64,
+            None,
+            Endianness::Little,
+            BinaryFormat::Coff,
+            ArchiveKind::Coff,
+            false,
+        ),
+        (
+            Architecture::I386,
+            None,
+            Endianness::Little,
+            BinaryFormat::Coff,
+            ArchiveKind::Coff,
+            false,
+        ),
+        (
+            Architecture::Aarch64,
+            None,
+            Endianness::Little,
+            BinaryFormat::Coff,
+            ArchiveKind::Coff,
+            false,
+        ),
+        (
+            Architecture::Aarch64,
+            Some(SubArchitecture::Arm64EC),
+            Endianness::Little,
+            BinaryFormat::Coff,
+            ArchiveKind::Coff,
+            false,
+        ),
         // MachO
         (
             Architecture::X86_64,
+            None,
             Endianness::Little,
             BinaryFormat::MachO,
             ArchiveKind::Darwin,
@@ -215,14 +310,24 @@ where
         ),
         (
             Architecture::Aarch64,
+            None,
+            Endianness::Little,
+            BinaryFormat::MachO,
+            ArchiveKind::Darwin,
+            false,
+        ),
+        (
+            Architecture::Aarch64,
+            Some(SubArchitecture::Arm64E),
             Endianness::Little,
             BinaryFormat::MachO,
             ArchiveKind::Darwin,
             false,
         ),
     ] {
+        let is_ec = subarch == Some(SubArchitecture::Arm64EC);
         let tmpdir = create_tmp_dir(test_name);
-        let input_objects = generate_objects(architecture, endianness, binary_format);
+        let input_objects = generate_objects(architecture, subarch, endianness, binary_format);
         let llvm_ar_archive = create_archive_with_llvm_ar(
             &tmpdir,
             archive_kind,
@@ -230,6 +335,7 @@ where
                 .iter()
                 .map(|(name, bytes)| (*name, bytes.as_slice())),
             thin,
+            is_ec,
         );
         let ar_archive_writer_archive = create_archive_with_ar_archive_writer(
             &tmpdir,
@@ -238,6 +344,7 @@ where
                 .iter()
                 .map(|(name, bytes)| (*name, bytes.as_slice())),
             thin,
+            is_ec,
         );
 
         assert_eq!(
