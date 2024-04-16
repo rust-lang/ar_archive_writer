@@ -1,5 +1,3 @@
-// Copied from https://github.com/llvm/llvm-project/blob/3d3ef9d073e1e27ea57480b371b7f5a9f5642ed2/llvm/include/llvm/Object/ArchiveWriter.h
-
 //===- ArchiveWriter.h - ar archive file format writer ----------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -42,16 +40,26 @@ struct NewArchiveMember {
 
 Expected<std::string> computeArchiveRelativePath(StringRef From, StringRef To);
 
+enum class SymtabWritingMode {
+  NoSymtab,     // Do not write symbol table.
+  NormalSymtab, // Write symbol table. For the Big Archive format, write both
+                // 32-bit and 64-bit symbol tables.
+  BigArchive32, // Only write the 32-bit symbol table.
+  BigArchive64  // Only write the 64-bit symbol table.
+};
+
 Error writeArchive(StringRef ArcName, ArrayRef<NewArchiveMember> NewMembers,
-                   bool WriteSymtab, object::Archive::Kind Kind,
+                   SymtabWritingMode WriteSymtab, object::Archive::Kind Kind,
                    bool Deterministic, bool Thin,
-                   std::unique_ptr<MemoryBuffer> OldArchiveBuf = nullptr);
+                   std::unique_ptr<MemoryBuffer> OldArchiveBuf = nullptr,
+                   bool IsEC = false);
 
 // writeArchiveToBuffer is similar to writeArchive but returns the Archive in a
 // buffer instead of writing it out to a file.
 Expected<std::unique_ptr<MemoryBuffer>>
-writeArchiveToBuffer(ArrayRef<NewArchiveMember> NewMembers, bool WriteSymtab,
-                     object::Archive::Kind Kind, bool Deterministic, bool Thin);
+writeArchiveToBuffer(ArrayRef<NewArchiveMember> NewMembers,
+                     SymtabWritingMode WriteSymtab, object::Archive::Kind Kind,
+                     bool Deterministic, bool Thin);
 }
 
 #endif

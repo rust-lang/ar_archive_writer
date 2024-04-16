@@ -1,4 +1,4 @@
-use object::{write, Architecture};
+use object::write;
 
 mod common;
 
@@ -9,25 +9,22 @@ mod common;
 fn basic_multiple_objects() {
     common::generate_archive_and_compare(
         "basic_multiple_objects",
-        |architecture, endianness, binary_format| {
+        |architecture, subarch, endianness, binary_format| {
             let mut object1 = write::Object::new(binary_format, architecture, endianness);
-            // FIXME: Need 64-bit Big AIX symbol table support to match llvm-ar.
-            if architecture != Architecture::PowerPc64 {
-                common::add_file_with_functions_to_object(
-                    &mut object1,
-                    b"file1.c",
-                    &[b"func1", b"func2", b"func_overlapping"],
-                );
-            }
+            object1.set_sub_architecture(subarch);
+            common::add_file_with_functions_to_object(
+                &mut object1,
+                b"file1.c",
+                &[b"func1", b"func2", b"func_overlapping"],
+            );
 
             let mut object2 = write::Object::new(binary_format, architecture, endianness);
-            if architecture != Architecture::PowerPc64 {
-                common::add_file_with_functions_to_object(
-                    &mut object2,
-                    b"file2.c",
-                    &[b"func3", b"func4", b"func_overlapping"],
-                );
-            }
+            object2.set_sub_architecture(subarch);
+            common::add_file_with_functions_to_object(
+                &mut object2,
+                b"file2.c",
+                &[b"func3", b"func4", b"func_overlapping"],
+            );
 
             vec![
                 ("file1.o", object1.write().unwrap()),
@@ -44,17 +41,14 @@ fn basic_multiple_objects() {
 fn multiple_objects_same_name() {
     common::generate_archive_and_compare(
         "multiple_objects_same_name",
-        |architecture, endianness, binary_format| {
+        |architecture, subarch, endianness, binary_format| {
             let mut object1 = write::Object::new(binary_format, architecture, endianness);
-            // FIXME: Need 64-bit Big AIX symbol table support to match llvm-ar.
-            if architecture != Architecture::PowerPc64 {
-                common::add_file_with_functions_to_object(&mut object1, b"file1.c", &[b"func1"]);
-            }
+            object1.set_sub_architecture(subarch);
+            common::add_file_with_functions_to_object(&mut object1, b"file1.c", &[b"func1"]);
 
             let mut object2 = write::Object::new(binary_format, architecture, endianness);
-            if architecture != Architecture::PowerPc64 {
-                common::add_file_with_functions_to_object(&mut object2, b"file2.c", &[b"func2"]);
-            }
+            object2.set_sub_architecture(subarch);
+            common::add_file_with_functions_to_object(&mut object2, b"file2.c", &[b"func2"]);
 
             vec![
                 ("1/file.o", object1.write().unwrap()),

@@ -1,3 +1,4 @@
 [toolchain]
-channel = "stable"
+# FIXME: LLVM 18 is in Rust 1.78, which is currently beta.
+channel = "beta"
 components = ["llvm-tools"]

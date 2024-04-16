@@ -7,8 +7,14 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      RUSTFLAGS: -Dwarnings
+      RUST_BACKTRACE: full
     steps:
       - uses: actions/checkout@v3
+      - name: Clippy
+        run: |
+          cargo clippy -- -Dwarnings
       - name: Test
         run: |
           cargo test

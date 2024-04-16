@@ -1,5 +1,3 @@
-// Copied from https://github.com/llvm/llvm-project/blob/3d3ef9d073e1e27ea57480b371b7f5a9f5642ed2/llvm/include/llvm/Support/Alignment.h
-
 //===-- llvm/Support/Alignment.h - Useful alignment functions ---*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -23,9 +21,9 @@
 #ifndef LLVM_SUPPORT_ALIGNMENT_H_
 #define LLVM_SUPPORT_ALIGNMENT_H_
 
-#include "llvm/ADT/Optional.h"
 #include "llvm/Support/MathExtras.h"
 #include <cassert>
+#include <optional>
 #ifndef NDEBUG
 #include <string>
 #endif // NDEBUG
@@ -95,14 +93,14 @@ public:
   }
 
   /// Allow constructions of constexpr Align.
-  template <size_t kValue> constexpr static LogValue Constant() {
+  template <size_t kValue> constexpr static Align Constant() {
     return LogValue{static_cast<uint8_t>(CTLog2<kValue>())};
   }
 
   /// Allow constructions of constexpr Align from types.
   /// Compile time equivalent to Align(alignof(T)).
-  template <typename T> constexpr static LogValue Of() {
-    return Constant<std::alignment_of<T>::value>();
+  template <typename T> constexpr static Align Of() {
+    return Constant<std::alignment_of_v<T>>();
   }
 
   /// Constexpr constructor from LogValue type.
@@ -116,9 +114,9 @@ inline Align assumeAligned(uint64_t Value) {
 
 /// This struct is a compact representation of a valid (power of two) or
 /// undefined (0) alignment.
-struct MaybeAlign : public llvm::Optional<Align> {
+struct MaybeAlign : public std::optional<Align> {
 private:
-  using UP = llvm::Optional<Align>;
+  using UP = std::optional<Align>;
 
 public:
   /// Default is undefined.
@@ -130,9 +128,8 @@ public:
   MaybeAlign(MaybeAlign &&Other) = default;
   MaybeAlign &operator=(MaybeAlign &&Other) = default;
 
-  /// Use llvm::Optional<Align> constructor.
-  using UP::UP;
-
+  constexpr MaybeAlign(std::nullopt_t None) : UP(None) {}
+  constexpr MaybeAlign(Align Value) : UP(Value) {}
   explicit MaybeAlign(uint64_t Value) {
     assert((Value == 0 || llvm::isPowerOf2_64(Value)) &&
            "Alignment is neither 0 nor a power of 2");
@@ -293,6 +290,22 @@ bool operator<=(MaybeAlign Lhs, MaybeAlign Rhs) = delete;
 bool operator>=(MaybeAlign Lhs, MaybeAlign Rhs) = delete;
 bool operator<(MaybeAlign Lhs, MaybeAlign Rhs) = delete;
 bool operator>(MaybeAlign Lhs, MaybeAlign Rhs) = delete;
+
+// Allow equality comparisons between Align and MaybeAlign.
+inline bool operator==(MaybeAlign Lhs, Align Rhs) { return Lhs && *Lhs == Rhs; }
+inline bool operator!=(MaybeAlign Lhs, Align Rhs) { return !(Lhs == Rhs); }
+inline bool operator==(Align Lhs, MaybeAlign Rhs) { return Rhs == Lhs; }
+inline bool operator!=(Align Lhs, MaybeAlign Rhs) { return !(Rhs == Lhs); }
+// Allow equality comparisons with MaybeAlign.
+inline bool operator==(MaybeAlign Lhs, MaybeAlign Rhs) {
+  return (Lhs && Rhs && (*Lhs == *Rhs)) || (!Lhs && !Rhs);
+}
+inline bool operator!=(MaybeAlign Lhs, MaybeAlign Rhs) { return !(Lhs == Rhs); }
+// Allow equality comparisons with std::nullopt.
+inline bool operator==(MaybeAlign Lhs, std::nullopt_t) { return !bool(Lhs); }
+inline bool operator!=(MaybeAlign Lhs, std::nullopt_t) { return bool(Lhs); }
+inline bool operator==(std::nullopt_t, MaybeAlign Rhs) { return !bool(Rhs); }
+inline bool operator!=(std::nullopt_t, MaybeAlign Rhs) { return bool(Rhs); }
 
 #ifndef NDEBUG
 // For usage in LLVM_DEBUG macros.
