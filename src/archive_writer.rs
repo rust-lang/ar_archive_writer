@@ -41,6 +41,24 @@ pub struct NewArchiveMember<'a> {
     pub perms: u32,
 }
 
+impl<'a> NewArchiveMember<'a> {
+    pub fn new<T: AsRef<[u8]> + 'a>(
+        buf: T,
+        object_reader: &'static ObjectReader,
+        member_name: String,
+    ) -> Self {
+        Self {
+            buf: Box::new(buf),
+            object_reader,
+            member_name,
+            mtime: 0,
+            uid: 0,
+            gid: 0,
+            perms: 0o644,
+        }
+    }
+}
+
 fn is_darwin(kind: ArchiveKind) -> bool {
     matches!(kind, ArchiveKind::Darwin | ArchiveKind::Darwin64)
 }
@@ -546,7 +564,10 @@ fn write_symbols(
             (Some(&mut sym_map.ec_map), None)
         } else {
             is_using_map = true;
-            (Some(&mut sym_map.map), Some(&mut sym_map.ec_map))
+            (
+                Some(&mut sym_map.map),
+                sym_map.use_ec_map.then_some(&mut sym_map.ec_map),
+            )
         }
     } else {
         (None, None)

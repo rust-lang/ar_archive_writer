@@ -1,0 +1,16 @@
+; This must match get_members() in import_library.rs
+LIBRARY MyLibrary
+EXPORTS
+   NormalFunc
+   NormalData        DATA
+   NormalConstant    CONSTANT
+   PrivateFunc       PRIVATE
+   FuncWithOrdinal   @1
+   FuncWithNoName    @2 NONAME
+   RenamedFunc=InternalName
+   ReexportedFunc=OtherModule.OtherName
+   ReexportedViaOrd=OtherModule.#42
+   FuncWithImportName==ImportName
+   ?CppFunc@SingleAt
+   ?CppFunc@@DoubleAt
+   ?CppFunc@@@TripleAt
