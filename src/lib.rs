@@ -7,12 +7,16 @@
 mod alignment;
 mod archive;
 mod archive_writer;
+mod coff;
 mod coff_import_file;
+mod mangler;
 mod math_extras;
 mod object_reader;
 
 pub use archive::ArchiveKind;
 pub use archive_writer::{write_archive_to_stream, NewArchiveMember};
+pub use coff::MachineTypes;
+pub use coff_import_file::{write_import_library, COFFShortExport};
 
 pub type GetSymbolsFn =
     fn(buf: &[u8], f: &mut dyn FnMut(&[u8]) -> std::io::Result<()>) -> std::io::Result<bool>;
