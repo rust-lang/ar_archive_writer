@@ -27,6 +27,28 @@ pub fn create_tmp_dir(test_name: &str) -> PathBuf {
     tmpdir
 }
 
+/// Creates a symlink to `llvm-ar` so that it acts like `llvm-lib`.
+pub fn create_llvm_lib_tool(tmp_dir: &Path) -> PathBuf {
+    let ar_path = cargo_binutils::Tool::Ar.path().unwrap();
+    let lib_path = tmp_dir.join("llvm-lib");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(ar_path, &lib_path).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(ar_path, &lib_path).unwrap();
+    lib_path
+}
+
+/// Creates a symlink to `llvm-ar` so that it acts like `llvm-dlltool`.
+pub fn create_llvm_dlltool_tool(tmp_dir: &Path) -> PathBuf {
+    let ar_path = cargo_binutils::Tool::Ar.path().unwrap();
+    let lib_path = tmp_dir.join("llvm-dlltool");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(ar_path, &lib_path).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(ar_path, &lib_path).unwrap();
+    lib_path
+}
+
 fn run_llvm_ar(
     object_paths: &[PathBuf],
     archive_path: &Path,
@@ -34,17 +56,10 @@ fn run_llvm_ar(
     thin: bool,
     is_ec: bool,
 ) {
-    let ar_path = cargo_binutils::Tool::Ar.path().unwrap();
-
     // FIXME: LLVM 19 adds support for "coff" as a format argument, so in the
     // meantime, we'll instruct llvm-ar to pretend to be llvm-lib.
     let output = if archive_kind == ArchiveKind::Coff {
-        let lib_path = archive_path.parent().unwrap().join("llvm-lib");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&ar_path, &lib_path).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&ar_path, &lib_path).unwrap();
-
+        let lib_path = create_llvm_lib_tool(archive_path.parent().unwrap());
         let mut command = Command::new(lib_path);
 
         if is_ec {
@@ -60,6 +75,7 @@ fn run_llvm_ar(
             .output()
             .unwrap()
     } else {
+        let ar_path = cargo_binutils::Tool::Ar.path().unwrap();
         let mut command = Command::new(ar_path);
 
         let format_arg = match archive_kind {
@@ -151,15 +167,11 @@ pub fn create_archive_with_ar_archive_writer<'a>(
                     .to_string()
             };
 
-            NewArchiveMember {
-                buf: Box::new(bytes) as Box<dyn AsRef<[u8]>>,
-                object_reader: &ar_archive_writer::DEFAULT_OBJECT_READER,
+            NewArchiveMember::new(
+                bytes,
+                &ar_archive_writer::DEFAULT_OBJECT_READER,
                 member_name,
-                mtime: 0,
-                uid: 0,
-                gid: 0,
-                perms: 0o644,
-            }
+            )
         })
         .collect::<Vec<_>>();
     let mut output_bytes = Cursor::new(Vec::new());
