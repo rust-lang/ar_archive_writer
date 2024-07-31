@@ -49,12 +49,6 @@ fn round_trip_and_diff(
         let output_archive =
             read::archive::ArchiveFile::parse(output_archive_bytes.as_slice()).unwrap();
         let mut members = output_archive.members();
-        if is_ec && archive_kind == ArchiveKind::Coff {
-            // FIXME: Skip the EC Symbol Table, since `object` doesn't correctly
-            // handle it as a special member.
-            // Fix in object: https://github.com/gimli-rs/object/pull/669
-            members.next().unwrap().unwrap();
-        }
         let output_member = members.next().unwrap().unwrap();
         if archive_kind != ArchiveKind::Coff {
             assert_eq!(output_member.name(), b"input.o");

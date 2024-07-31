@@ -42,7 +42,10 @@ macro_rules! u32 {
 }
 
 // Derived from COFFImportFile::printSymbolName and COFFImportFile::symbol_end.
-fn get_short_import_symbol(buf: &[u8], f: &mut dyn FnMut(&[u8]) -> Result<()>) -> Result<bool> {
+pub(crate) fn get_short_import_symbol(
+    buf: &[u8],
+    f: &mut dyn FnMut(&[u8]) -> Result<()>,
+) -> Result<bool> {
     let mut offset = 0;
     let header = ImportObjectHeader::parse(buf, &mut offset).map_err(Error::other)?;
     let data = header.parse_data(buf, &mut offset).map_err(Error::other)?;

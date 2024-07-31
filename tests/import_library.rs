@@ -1,10 +1,12 @@
 use std::fs;
 use std::io::Cursor;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ar_archive_writer::{COFFShortExport, MachineTypes};
+use ar_archive_writer::{ArchiveKind, COFFShortExport, MachineTypes};
+use common::{create_archive_with_ar_archive_writer, create_archive_with_llvm_ar};
+use object::read::archive::ArchiveFile;
+use object::{Architecture, SubArchitecture};
 use pretty_assertions::assert_eq;
 
 mod common;
@@ -212,6 +214,70 @@ fn compare_to_dlltool() {
         assert_eq!(
             llvm_lib_bytes, archive_writer_bytes,
             "Import library differs. Machine type: {machine_type:?}",
+        );
+    }
+}
+
+/// Creates an import library and then wraps that in an archive.
+#[test]
+fn wrap_in_archive() {
+    for (architecture, subarch, machine_type) in [
+        (Architecture::I386, None, MachineTypes::I386),
+        (Architecture::X86_64, None, MachineTypes::AMD64),
+        (Architecture::Arm, None, MachineTypes::ARMNT),
+        (Architecture::Aarch64, None, MachineTypes::ARM64),
+        (
+            Architecture::Aarch64,
+            Some(SubArchitecture::Arm64EC),
+            MachineTypes::ARM64EC,
+        ),
+    ] {
+        let temp_dir = common::create_tmp_dir("import_library_wrap_in_archive");
+
+        let mut import_lib_bytes = Cursor::new(Vec::new());
+        ar_archive_writer::write_import_library(
+            &mut import_lib_bytes,
+            &temp_dir.join("MyLibrary.dll").to_string_lossy().to_string(),
+            &get_members(machine_type),
+            machine_type,
+            false,
+        )
+        .unwrap();
+        let import_lib_bytes = import_lib_bytes.into_inner();
+
+        let is_ec = subarch == Some(SubArchitecture::Arm64EC);
+        let llvm_ar_archive = create_archive_with_llvm_ar(
+            &temp_dir,
+            ArchiveKind::Coff,
+            [("MyLibrary.dll.lib", import_lib_bytes.as_slice())],
+            false,
+            is_ec,
+        );
+        // When a archive is passed into lib.exe, it is opened and the individual members are included
+        // in the new output library. Also, for whatever reason, the members are reversed.
+        let archive = ArchiveFile::parse(import_lib_bytes.as_slice()).unwrap();
+        let mut members = archive
+            .members()
+            .map(|m| {
+                let member = m.unwrap();
+                (
+                    String::from_utf8(member.name().to_vec()).unwrap(),
+                    member.data(import_lib_bytes.as_slice()).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        members.reverse();
+        let ar_archive_writer_archive = create_archive_with_ar_archive_writer(
+            &temp_dir,
+            ArchiveKind::Coff,
+            members.iter().map(|(name, data)| (name.as_str(), *data)),
+            false,
+            is_ec,
+        );
+
+        assert_eq!(
+            llvm_ar_archive, ar_archive_writer_archive,
+            "Archives differ for architecture: {architecture:?}, subarch: {subarch:?}, machine type: {machine_type:?}",
         );
     }
 }

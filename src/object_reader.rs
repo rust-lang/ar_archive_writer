@@ -7,14 +7,13 @@
 
 use std::{io, mem::offset_of};
 
-use object::{xcoff, Object, ObjectSymbol};
+use object::{pe::ImportObjectHeader, xcoff, Object, ObjectSymbol};
+
+use crate::coff_import_file;
 
 fn is_archive_symbol(sym: &object::read::Symbol<'_, '_>) -> bool {
     // FIXME Use a better equivalent of LLVM's SymbolRef::SF_FormatSpecific
-    if sym.kind() == object::SymbolKind::Null
-        || sym.kind() == object::SymbolKind::File
-        || sym.kind() == object::SymbolKind::Section
-    {
+    if sym.kind() == object::SymbolKind::File || sym.kind() == object::SymbolKind::Section {
         return false;
     }
     if !sym.is_global() {
@@ -42,7 +41,15 @@ pub fn get_native_object_symbols(
             }
             Ok(true)
         }
-        Err(_) => Ok(false),
+        Err(_) => {
+            let mut offset = 0;
+            // Try to handle this as a COFF import library.
+            if ImportObjectHeader::parse(buf, &mut offset).is_ok() {
+                coff_import_file::get_short_import_symbol(buf, f).or(Ok(false))
+            } else {
+                Ok(false)
+            }
+        }
     }
 }
 
