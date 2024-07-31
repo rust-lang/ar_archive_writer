@@ -475,7 +475,7 @@ fn write_symbol_table<W: Write + Seek>(
 fn write_symbol_map<W: Write + Seek>(
     w: &mut W,
     kind: ArchiveKind,
-    members: &[MemberData],
+    members: &[MemberData<'_>],
     sym_map: &SymMap,
     members_offset: u64,
 ) -> io::Result<()> {

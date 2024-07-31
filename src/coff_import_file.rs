@@ -246,7 +246,7 @@ impl<'a> ObjectFactory<'a> {
     /// reference to the terminators and contains the library name (entry) for the
     /// import name table.  It will force the linker to construct the necessary
     /// structure to import symbols from the DLL.
-    fn create_import_descriptor(&self) -> Result<NewArchiveMember> {
+    fn create_import_descriptor(&self) -> Result<NewArchiveMember<'_>> {
         let mut buffer = Vec::new();
 
         const NUMBER_OF_SECTIONS: usize = 2;
@@ -460,7 +460,7 @@ impl<'a> ObjectFactory<'a> {
     /// Creates a NULL import descriptor.  This is a small object file whcih
     /// contains a NULL import descriptor.  It is used to terminate the imports
     /// from a specific DLL.
-    fn create_null_import_descriptor(&self) -> Result<NewArchiveMember> {
+    fn create_null_import_descriptor(&self) -> Result<NewArchiveMember<'_>> {
         let mut buffer = Vec::new();
 
         const NUMBER_OF_SECTIONS: usize = 1;
@@ -542,7 +542,7 @@ impl<'a> ObjectFactory<'a> {
     /// Create a NULL Thunk Entry.  This is a small object file which contains a
     /// NULL Import Address Table entry and a NULL Import Lookup Table Entry.  It
     /// is used to terminate the IAT and ILT.
-    fn create_null_thunk(&self) -> Result<NewArchiveMember> {
+    fn create_null_thunk(&self) -> Result<NewArchiveMember<'_>> {
         let mut buffer = Vec::new();
 
         const NUMBER_OF_SECTIONS: usize = 2;
@@ -658,7 +658,7 @@ impl<'a> ObjectFactory<'a> {
         name_type: ImportNameType,
         export_name: Option<&str>,
         machine: MachineTypes,
-    ) -> Result<NewArchiveMember> {
+    ) -> Result<NewArchiveMember<'_>> {
         let mut imp_size = self.import_name.len() + sym.len() + 2; // +2 for NULs
         if let Some(export_name) = export_name {
             imp_size += export_name.len() + 1;
@@ -704,7 +704,7 @@ impl<'a> ObjectFactory<'a> {
         weak: &str,
         imp: bool,
         machine: MachineTypes,
-    ) -> Result<NewArchiveMember> {
+    ) -> Result<NewArchiveMember<'_>> {
         let mut buffer = Vec::new();
         const NUMBER_OF_SECTIONS: usize = 1;
         const NUMBER_OF_SYMBOLS: usize = 5;

@@ -17,3 +17,6 @@ object = { version = "0.35.0", default-features = false, features = ["std", "rea
 cargo-binutils = "0.3.6"
 object = { version = "0.35.0", default-features = false, features = ["write", "xcoff"] }
 pretty_assertions = "1.4.0"
+
+[lints.rust]
+rust_2018_idioms = { level = "deny" }

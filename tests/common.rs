@@ -367,7 +367,7 @@ where
 }
 
 pub fn add_file_with_functions_to_object(
-    object: &mut Object,
+    object: &mut Object<'_>,
     file_name: &[u8],
     func_names: &[&[u8]],
 ) {
