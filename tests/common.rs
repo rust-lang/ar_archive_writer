@@ -107,10 +107,10 @@ fn run_llvm_ar(
 
 /// Creates an archive with the given objects using `llvm-ar`.
 /// The generated archive is written to disk as `output_llvm_ar.a`.
-pub fn create_archive_with_llvm_ar<'a>(
+pub fn create_archive_with_llvm_ar<'name, 'data>(
     tmpdir: &Path,
     archive_kind: ArchiveKind,
-    input_objects: impl IntoIterator<Item = (&'static str, &'a [u8])>,
+    input_objects: impl IntoIterator<Item = (&'name str, &'data [u8])>,
     thin: bool,
     is_ec: bool,
 ) -> Vec<u8> {
@@ -140,10 +140,10 @@ pub fn create_archive_with_llvm_ar<'a>(
 
 /// Creates an archive with the given objects using `ar_archive_writer`.
 /// The generated archive is written to disk as `output_ar_archive_writer.a`.
-pub fn create_archive_with_ar_archive_writer<'a>(
+pub fn create_archive_with_ar_archive_writer<'name, 'data>(
     tmpdir: &Path,
     archive_kind: ArchiveKind,
-    input_objects: impl IntoIterator<Item = (&'static str, &'a [u8])>,
+    input_objects: impl IntoIterator<Item = (&'name str, &'data [u8])>,
     thin: bool,
     is_ec: bool,
 ) -> Vec<u8> {
