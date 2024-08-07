@@ -18,6 +18,10 @@ jobs:
       - name: Test
         run: |
           cargo test
+      - name: Check (big-endian)
+        run: |
+          rustup target add powerpc64-unknown-linux-gnu
+          cargo check --target powerpc64-unknown-linux-gnu
 
   fmt:
     name: rustfmt
