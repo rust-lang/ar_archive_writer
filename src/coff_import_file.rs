@@ -31,13 +31,13 @@ pub(crate) const NULL_THUNK_DATA_SUFFIX: &[u8] = b"_NULL_THUNK_DATA";
 
 macro_rules! u16 {
     ($val:expr) => {
-        object::U16::new(object::NativeEndian, $val)
+        object::U16::new(object::LittleEndian, $val)
     };
 }
 
 macro_rules! u32 {
     ($val:expr) => {
-        object::U32::new(object::NativeEndian, $val)
+        object::U32::new(object::LittleEndian, $val)
     };
 }
 
@@ -49,7 +49,7 @@ pub(crate) fn get_short_import_symbol(
     let mut offset = 0;
     let header = ImportObjectHeader::parse(buf, &mut offset).map_err(Error::other)?;
     let data = header.parse_data(buf, &mut offset).map_err(Error::other)?;
-    let is_ec = header.machine.get(object::NativeEndian) == object::pe::IMAGE_FILE_MACHINE_ARM64EC;
+    let is_ec = header.machine.get(object::LittleEndian) == object::pe::IMAGE_FILE_MACHINE_ARM64EC;
 
     let name = data.symbol();
     let demangled_name = is_ec
@@ -77,7 +77,7 @@ pub(crate) fn get_short_import_symbol(
     f(demangled_name.as_ref())?;
 
     // For Arm64EC, also the EC import symbol and thunk.
-    if header.machine.get(object::NativeEndian) == object::pe::IMAGE_FILE_MACHINE_ARM64EC {
+    if header.machine.get(object::LittleEndian) == object::pe::IMAGE_FILE_MACHINE_ARM64EC {
         const IMP_PREFIX: &[u8] = b"__imp_aux_";
         f(&IMP_PREFIX
             .iter()
