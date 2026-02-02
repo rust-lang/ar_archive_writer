@@ -138,12 +138,9 @@ fn set_name_to_string_table_entry(symbol: &mut ImageSymbol, offset: usize) {
 
 fn apply_name_type(import_type: ImportNameType, name: &str) -> &str {
     fn ltrim1<'a>(name: &'a str, chars: &str) -> &'a str {
-        if let Some((first_char, rest)) = name.split_at_checked(1)
-            && chars.contains(first_char)
-        {
-            return rest;
-        }
-        name
+        name.split_at_checked(1)
+            .and_then(|(first_char, rest)| chars.contains(first_char).then_some(rest))
+            .unwrap_or(name)
     }
 
     match import_type {

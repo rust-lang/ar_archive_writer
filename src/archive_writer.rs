@@ -588,11 +588,10 @@ fn write_symbols(
 
                 // If EC is enabled, then the import descriptors are NOT put into EC
                 // objects so we need to copy them to the EC map manually.
-                if let Some(ec_map) = &mut ec_map
-                    && is_import_descriptor(name)
-                {
-                    ec_map.insert(name.to_vec().into_boxed_slice(), index);
-                }
+                ec_map.as_mut().and_then(|ec_map| {
+                    is_import_descriptor(name)
+                        .then(|| ec_map.insert(name.to_vec().into_boxed_slice(), index))
+                });
             }
         } else {
             ret.push(sym_names.stream_position()?);
