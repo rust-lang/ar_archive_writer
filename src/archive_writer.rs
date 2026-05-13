@@ -549,9 +549,13 @@ fn is_import_descriptor(name: &[u8]) -> bool {
 
 // NOTE: LLVM calls this getSymbols and has the get_native_object_symbols
 // function (moved to object_reader.rs) inlined.
+// NOTE: LLVM uses u16 as symbol index. This is only used for the COFF archive
+// format. If there are more than 0xfffe archive members however we switch to
+// the GNU archive format which ignores the symbol index. As such to avoid an
+// overflow accept usize here and only convert to u16 on COFF archives.
 fn write_symbols(
     obj: &[u8],
-    index: u16,
+    index: usize,
     sym_names: &mut Cursor<Vec<u8>>,
     sym_map: &mut Option<&mut SymMap>,
     object_reader: &ObjectReader,
@@ -575,6 +579,7 @@ fn write_symbols(
 
     (object_reader.get_symbols)(obj, &mut |name| {
         if let Some(map) = &mut map {
+            let index = u16::try_from(index).unwrap();
             let entry = map.entry(name.to_vec().into_boxed_slice());
             if matches!(entry, std::collections::btree_map::Entry::Occupied(_)) {
                 return Ok(()); // ignore duplicated symbol
@@ -813,13 +818,7 @@ fn compute_member_data<'a, S: Write + Seek>(
             )?;
         }
 
-        let symbols = write_symbols(
-            buf,
-            index.try_into().unwrap(),
-            sym_names,
-            sym_map,
-            m.object_reader,
-        )?;
+        let symbols = write_symbols(buf, index, sym_names, sym_map, m.object_reader)?;
         has_object = true;
 
         pos += u64::try_from(header.len() + data.len() + padding.len()).unwrap();
