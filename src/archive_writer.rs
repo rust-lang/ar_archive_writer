@@ -164,7 +164,7 @@ fn print_big_archive_member_header<W: Write>(
     if !name.is_empty() {
         write!(w, "{name}")?;
 
-        if name.len() % 2 != 0 {
+        if !name.len().is_multiple_of(2) {
             write!(w, "\0")?;
         }
     }
