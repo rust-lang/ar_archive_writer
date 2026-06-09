@@ -57,3 +57,26 @@ fn multiple_objects_same_name() {
         },
     );
 }
+
+/// Test that we don't get a member index overflow when there are more members than fit in a u16.
+#[test]
+#[ignore = "takes >60s and requires `ulimit -s unlimited`"]
+fn many_objects() {
+    common::generate_archive_and_compare(
+        "many_objects",
+        |architecture, subarch, endianness, binary_format| {
+            let mut object1 = write::Object::new(binary_format, architecture, endianness);
+            object1.set_sub_architecture(subarch);
+            common::add_file_with_functions_to_object(&mut object1, b"file1.c", &[b"func1"]);
+
+            let mut members = vec![];
+            for i in 0..u32::from(u16::MAX) + 2 {
+                members.push((
+                    &*Box::leak(format!("{i:x}").into_boxed_str()),
+                    object1.write().unwrap(),
+                ));
+            }
+            members
+        },
+    );
+}
