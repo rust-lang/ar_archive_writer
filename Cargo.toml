@@ -2,6 +2,7 @@
 name = "ar_archive_writer"
 version = "0.5.1"
 edition = "2024"
+rust-version = "1.88.0"
 license = "Apache-2.0 WITH LLVM-exception"
 description = "A writer for object file ar archives"
 keywords = ["ar", "archive"]
