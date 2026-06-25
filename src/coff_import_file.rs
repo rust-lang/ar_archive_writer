@@ -47,7 +47,7 @@ macro_rules! u32 {
 // Derived from COFFImportFile::printSymbolName and COFFImportFile::symbol_end.
 pub(crate) fn get_short_import_symbol(
     buf: &[u8],
-    f: &mut dyn FnMut(&[u8]) -> Result<()>,
+    f: &mut dyn FnMut(&[u8], Option<u32>) -> Result<()>,
 ) -> Result<bool> {
     let mut offset = 0;
     let header = ImportObjectHeader::parse(buf, &mut offset).map_err(Error::other)?;
@@ -65,11 +65,14 @@ pub(crate) fn get_short_import_symbol(
 
     // Import symbol is first.
     const IMP_PREFIX: &[u8] = b"__imp_";
-    f(&IMP_PREFIX
-        .iter()
-        .chain(demangled_name.as_ref())
-        .copied()
-        .collect::<Vec<_>>())?;
+    f(
+        &IMP_PREFIX
+            .iter()
+            .chain(demangled_name.as_ref())
+            .copied()
+            .collect::<Vec<_>>(),
+        None,
+    )?;
 
     // For data, only the import symbol is needed.
     if header.import_type() == object::pe::ImportObjectType(ImportType::Data.into()) {
@@ -77,18 +80,21 @@ pub(crate) fn get_short_import_symbol(
     }
 
     // Next, thunk.
-    f(demangled_name.as_ref())?;
+    f(demangled_name.as_ref(), None)?;
 
     // For Arm64EC, also the EC import symbol and thunk.
     if header.machine.get(object::LittleEndian) == object::pe::IMAGE_FILE_MACHINE_ARM64EC {
         const IMP_PREFIX: &[u8] = b"__imp_aux_";
-        f(&IMP_PREFIX
-            .iter()
-            .chain(demangled_name.as_ref())
-            .copied()
-            .collect::<Vec<_>>())?;
+        f(
+            &IMP_PREFIX
+                .iter()
+                .chain(demangled_name.as_ref())
+                .copied()
+                .collect::<Vec<_>>(),
+            None,
+        )?;
 
-        f(name)?;
+        f(name, None)?;
     }
 
     Ok(true)
