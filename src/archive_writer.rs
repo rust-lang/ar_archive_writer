@@ -684,7 +684,7 @@ fn compute_member_data<'a, S: Write + Seek>(
         for m in new_members {
             *filename_count.entry(&*m.member_name).or_insert(0) += 1;
         }
-        for (_name, count) in filename_count.iter_mut() {
+        for count in filename_count.values_mut() {
             *count = if *count > 1 { 1 } else { 0 };
         }
     }
