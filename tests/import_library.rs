@@ -68,13 +68,14 @@ fn get_members(machine_type: MachineTypes) -> Vec<COFFShortExport> {
             ext_name: Some(format!("{prefix}RenamedFunc")),
             ..DEFAULT_EXPORT
         },
+        // NB: LLVM avoids the prefix on forwarding exports since 21 (2b270df2e7be)
         COFFShortExport {
-            name: format!("{prefix}OtherModule.OtherName"),
+            name: "OtherModule.OtherName".to_string(),
             ext_name: Some(format!("{prefix}ReexportedFunc")),
             ..DEFAULT_EXPORT
         },
         COFFShortExport {
-            name: format!("{prefix}OtherModule.#42"),
+            name: "OtherModule.#42".to_string(),
             ext_name: Some(format!("{prefix}ReexportedViaOrd")),
             ..DEFAULT_EXPORT
         },
@@ -124,6 +125,7 @@ fn get_members(machine_type: MachineTypes) -> Vec<COFFShortExport> {
 
 fn create_import_library_with_ar_archive_writer(
     temp_dir: &Path,
+    members: &[COFFShortExport],
     machine_type: MachineTypes,
     mingw: bool,
     comdat: bool,
@@ -132,7 +134,7 @@ fn create_import_library_with_ar_archive_writer(
     ar_archive_writer::write_import_library(
         &mut output_bytes,
         "MyLibrary.dll",
-        &get_members(machine_type),
+        &members,
         machine_type,
         mingw,
         comdat,
@@ -158,8 +160,14 @@ fn compare_to_lib() {
     ] {
         let temp_dir = common::create_tmp_dir("import_library_compare_to_lib");
 
-        let archive_writer_bytes =
-            create_import_library_with_ar_archive_writer(&temp_dir, machine_type, false, false);
+        let members = get_members(machine_type);
+        let archive_writer_bytes = create_import_library_with_ar_archive_writer(
+            &temp_dir,
+            &members,
+            machine_type,
+            false,
+            false,
+        );
 
         let llvm_lib_bytes = {
             let machine_arg = match machine_type {
@@ -196,7 +204,13 @@ fn compare_to_lib() {
         );
 
         compare_comdat(
-            &create_import_library_with_ar_archive_writer(&temp_dir, machine_type, false, true),
+            &create_import_library_with_ar_archive_writer(
+                &temp_dir,
+                &members,
+                machine_type,
+                false,
+                true,
+            ),
             &llvm_lib_bytes,
         );
     }
@@ -212,8 +226,21 @@ fn compare_to_dlltool() {
     ] {
         let temp_dir = common::create_tmp_dir("import_library_compare_to_dlltool");
 
-        let archive_writer_bytes =
-            create_import_library_with_ar_archive_writer(&temp_dir, machine_type, true, false);
+        let mut members: Vec<COFFShortExport> = get_members(machine_type);
+        // dlltool discards the internal name in parseModuleDefinition
+        for m in &mut members {
+            if let Some(ext_name) = m.ext_name.take() {
+                m.name = ext_name;
+            }
+        }
+
+        let archive_writer_bytes = create_import_library_with_ar_archive_writer(
+            &temp_dir,
+            &members,
+            machine_type,
+            true,
+            false,
+        );
 
         let llvm_lib_bytes = {
             let machine_arg = match machine_type {
@@ -252,7 +279,13 @@ fn compare_to_dlltool() {
         );
 
         compare_comdat(
-            &create_import_library_with_ar_archive_writer(&temp_dir, machine_type, true, true),
+            &create_import_library_with_ar_archive_writer(
+                &temp_dir,
+                &members,
+                machine_type,
+                true,
+                true,
+            ),
             &llvm_lib_bytes,
         );
     }
