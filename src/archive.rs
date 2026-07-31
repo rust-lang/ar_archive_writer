@@ -6,6 +6,7 @@
 /// Size field is 10 decimal digits long
 pub(crate) const MAX_MEMBER_SIZE: u64 = 9999999999;
 
+#[non_exhaustive]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ArchiveKind {
     Gnu,

@@ -3,6 +3,7 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+#[non_exhaustive]
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 #[repr(u16)]
 #[allow(clippy::upper_case_acronyms)]
@@ -49,6 +50,7 @@ pub fn is_64_bit(machine: MachineTypes) -> bool {
     machine == MachineTypes::AMD64 || is_any_arm64(machine)
 }
 
+#[non_exhaustive]
 #[derive(PartialEq, Eq, Copy, Clone)]
 #[repr(u16)]
 pub enum ImportType {
@@ -66,6 +68,7 @@ impl From<ImportType> for u16 {
     }
 }
 
+#[non_exhaustive]
 #[derive(PartialEq, Eq, Copy, Clone)]
 #[repr(u16)]
 pub enum ImportNameType {
