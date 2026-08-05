@@ -8,6 +8,7 @@ description = "A writer for object file ar archives"
 keywords = ["ar", "archive"]
 readme = "Readme.md"
 repository = "https://github.com/rust-lang/ar_archive_writer"
+include = ["/src", "/LICENSE.txt", "/Readme.md"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
