@@ -2,16 +2,23 @@ on: [push, pull_request]
 
 name: CI
 
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    name: test
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       RUSTFLAGS: -Dwarnings
       RUST_BACKTRACE: full
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Clippy
         run: |
           cargo clippy -- -Dwarnings
@@ -23,12 +30,13 @@ jobs:
           rustup target add powerpc64-unknown-linux-gnu
           cargo check --target powerpc64-unknown-linux-gnu
 
-  fmt:
-    name: rustfmt
+  rustfmt:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install rustfmt
         run: |
           rustup component add rustfmt
