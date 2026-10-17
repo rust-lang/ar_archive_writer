@@ -10,7 +10,6 @@ concurrency:
 
 jobs:
   test:
-    name: test
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -31,8 +30,7 @@ jobs:
           rustup target add powerpc64-unknown-linux-gnu
           cargo check --target powerpc64-unknown-linux-gnu
 
-  fmt:
-    name: rustfmt
+  rustfmt:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
