@@ -472,6 +472,23 @@ fn write_symbol_table<W: Write + Seek>(
     )
 }
 
+/// Advances a 32-bit COFF member offset by `len` bytes, failing if the
+/// result no longer fits in 32 bits.
+fn next_member_offset(pos: u32, len: usize) -> io::Result<u32> {
+    u32::try_from(len)
+        .ok()
+        .and_then(|len| pos.checked_add(len))
+        .ok_or_else(archive_too_large)
+}
+
+fn archive_too_large() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "archive is too large: the COFF symbol table uses 32-bit member \
+         offsets, so members cannot start past the 4 GiB mark",
+    )
+}
+
 fn write_symbol_map<W: Write + Seek>(
     w: &mut W,
     kind: ArchiveKind,
@@ -482,21 +499,25 @@ fn write_symbol_map<W: Write + Seek>(
     let (size, pad) = compute_symbol_map_size_and_pad(members.len(), sym_map);
     write_symbol_table_header(w, kind, size, 0, 0)?;
 
-    let mut pos: u32 = members_offset.try_into().unwrap();
+    let mut pos: u32 = u32::try_from(members_offset).map_err(|_| archive_too_large())?;
 
-    w.write_all(&u32::try_from(members.len()).unwrap().to_le_bytes())?;
-    for m in members {
+    w.write_all(
+        &u32::try_from(members.len())
+            .map_err(|_| archive_too_large())?
+            .to_le_bytes(),
+    )?;
+    for (i, m) in members.iter().enumerate() {
         w.write_all(&pos.to_le_bytes())?; // member offset
-        pos = pos
-            .checked_add(
-                (m.header.len() + m.data.len() + m.padding.len())
-                    .try_into()
-                    .unwrap(),
-            )
-            .unwrap();
+        if i + 1 < members.len() {
+            pos = next_member_offset(pos, m.header.len() + m.data.len() + m.padding.len())?;
+        }
     }
 
-    w.write_all(&u32::try_from(sym_map.map.len()).unwrap().to_le_bytes())?;
+    w.write_all(
+        &u32::try_from(sym_map.map.len())
+            .map_err(|_| archive_too_large())?
+            .to_le_bytes(),
+    )?;
 
     for s in sym_map.map.values() {
         w.write_all(&s.to_le_bytes())?;
@@ -1212,4 +1233,27 @@ pub fn write_archive_to_stream<'a, W: Write + Seek>(
     }
 
     w.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_member_offset_ok() {
+        assert_eq!(next_member_offset(0, 10).unwrap(), 10);
+        assert_eq!(next_member_offset(u32::MAX - 5, 5).unwrap(), u32::MAX);
+    }
+
+    #[test]
+    fn next_member_offset_overflow() {
+        let err = next_member_offset(u32::MAX, 1).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn next_member_offset_len_over_u32() {
+        assert!(next_member_offset(0, u32::MAX as usize + 1).is_err());
+    }
 }
