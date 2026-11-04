@@ -938,17 +938,36 @@ pub fn write_archive_to_stream<'a, W: Write + Seek>(
         // speed the test up we use this environment variable to pretend like the
         // cutoff happens before 32-bits and instead happens at some much smaller
         // value.
-        // FIXME allow lowering the threshold for tests
-        const SYM64_THRESHOLD: u64 = 1 << 32;
+        let sym64_threshold = std::env::var("SYM64_THRESHOLD")
+            .ok()
+            .and_then(|threshold| threshold.parse::<u64>().ok())
+            .map_or(1u64 << 32, |threshold| threshold.min(1u64 << 32));
 
         // If LastMemberHeaderOffset isn't going to fit in a 32-bit varible we need
         // to switch to 64-bit. Note that the file can be larger than 4GB as long as
         // the last member starts before the 4GB offset.
-        if maybe_headers_size.unwrap() + last_member_header_offset >= SYM64_THRESHOLD {
-            if kind == ArchiveKind::Darwin {
-                kind = ArchiveKind::Darwin64;
-            } else {
-                kind = ArchiveKind::Gnu64;
+        if maybe_headers_size.unwrap() + last_member_header_offset >= sym64_threshold {
+            match kind {
+                ArchiveKind::Coff => {
+                    // COFF format has no 64-bit version, so we use GNU64 instead.
+                    if !sym_map.map.is_empty() && !sym_map.ec_map.is_empty() {
+                        // Only the COFF format supports the ECSYMBOLS section, so don't use
+                        // GNU64 when two symbol maps are required.
+                        return Err(io::Error::other(
+                            "Archive is too large: ARM64X does not support archives larger than 4GB",
+                        ));
+                    }
+                    // Since this changes the headers, we need to recalculate everything.
+                    return write_archive_to_stream(
+                        w,
+                        new_members,
+                        ArchiveKind::Gnu64,
+                        thin,
+                        is_ec,
+                    );
+                }
+                ArchiveKind::Darwin => kind = ArchiveKind::Darwin64,
+                _ => kind = ArchiveKind::Gnu64,
             }
             maybe_headers_size = None;
         }
