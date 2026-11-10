@@ -6,10 +6,10 @@ use object::{Architecture, BinaryFormat, Endianness, write};
 mod common;
 
 /// Tests archives whose member offsets do not fit in 32 bits, by lowering the
-/// threshold through `SYM64_THRESHOLD` for both `llvm-ar` and `ar_archive_writer`.
+/// threshold for both `llvm-ar` and `ar_archive_writer`.
 #[test]
 fn sym64_threshold() {
-    unsafe { std::env::set_var("SYM64_THRESHOLD", "100") };
+    common::set_sym64_threshold(100);
     common::generate_archive_and_compare(
         "sym64_threshold",
         |architecture, subarch, endianness, binary_format| {
@@ -41,7 +41,7 @@ fn sym64_threshold() {
 /// rejected instead of being written as GNU64.
 #[test]
 fn sym64_threshold_arm64x() {
-    unsafe { std::env::set_var("SYM64_THRESHOLD", "100") };
+    ar_archive_writer::set_sym64_threshold(100);
     let objects = [Architecture::Aarch64, Architecture::X86_64].map(|architecture| {
         let mut object = write::Object::new(BinaryFormat::Coff, architecture, Endianness::Little);
         common::add_file_with_functions_to_object(&mut object, b"file.c", &[b"sym"]);

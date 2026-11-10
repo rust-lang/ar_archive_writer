@@ -12,6 +12,19 @@ use object::{
 };
 use pretty_assertions::assert_eq;
 
+#[cfg(feature = "testing")]
+thread_local! {
+    static SYM64_THRESHOLD: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Lowers the offset at which `llvm-ar` and `ar_archive_writer` switch to a
+/// 64-bit symbol table for archives created on the current thread.
+#[cfg(feature = "testing")]
+pub fn set_sym64_threshold(threshold: u64) {
+    SYM64_THRESHOLD.set(Some(threshold));
+    ar_archive_writer::set_sym64_threshold(threshold);
+}
+
 /// Creates the temporary directory for a test.
 pub fn create_tmp_dir(test_name: &str) -> PathBuf {
     let tmpdir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(test_name);
@@ -58,7 +71,7 @@ fn run_llvm_ar(
 ) {
     // FIXME: LLVM 19 adds support for "coff" as a format argument, so in the
     // meantime, we'll instruct llvm-ar to pretend to be llvm-lib.
-    let output = if archive_kind == ArchiveKind::Coff {
+    let mut command = if archive_kind == ArchiveKind::Coff {
         let lib_path = create_llvm_lib_tool(archive_path.parent().unwrap());
         let mut command = Command::new(lib_path);
 
@@ -71,9 +84,8 @@ fn run_llvm_ar(
         object_paths.reverse();
         command
             .arg("/OUT:".to_string() + archive_path.to_str().unwrap())
-            .args(object_paths)
-            .output()
-            .unwrap()
+            .args(object_paths);
+        command
     } else {
         let ar_path = cargo_binutils::Tool::Ar.path().unwrap();
         let mut command = Command::new(ar_path);
@@ -90,13 +102,14 @@ fn run_llvm_ar(
             command.arg("--thin");
         }
 
+        command.arg("rcs").arg(archive_path).args(object_paths);
         command
-            .arg("rcs")
-            .arg(archive_path)
-            .args(object_paths)
-            .output()
-            .unwrap()
     };
+    #[cfg(feature = "testing")]
+    if let Some(threshold) = SYM64_THRESHOLD.get() {
+        command.env("SYM64_THRESHOLD", threshold.to_string());
+    }
+    let output = command.output().unwrap();
 
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),

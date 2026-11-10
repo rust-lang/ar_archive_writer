@@ -24,6 +24,19 @@ const BIG_AR_MEM_HDR_SIZE: u64 = {
     std::mem::size_of::<big_archive::BigArMemHdrType>() as u64
 };
 
+#[cfg(feature = "testing")]
+thread_local! {
+    static SYM64_THRESHOLD: std::cell::Cell<u64> = const { std::cell::Cell::new(1 << 32) };
+}
+
+/// Sets the offset at which archives written on the current thread switch to
+/// a 64-bit symbol table, so that tests can trigger the switch without 4 GiB
+/// of data.
+#[cfg(feature = "testing")]
+pub fn set_sym64_threshold(threshold: u64) {
+    SYM64_THRESHOLD.set(threshold);
+}
+
 #[derive(Default)]
 struct SymMap {
     use_ec_map: bool,
@@ -935,13 +948,13 @@ pub fn write_archive_to_stream<'a, W: Write + Seek>(
         // 32-bits can hold. The need for this shift in format is detected by
         // writeArchive. To test this we need to generate a file with a member that
         // has an offset larger than 32-bits but this demands a very slow test. To
-        // speed the test up we use this environment variable to pretend like the
+        // speed the test up we use `set_sym64_threshold` to pretend like the
         // cutoff happens before 32-bits and instead happens at some much smaller
         // value.
-        let sym64_threshold = std::env::var("SYM64_THRESHOLD")
-            .ok()
-            .and_then(|threshold| threshold.parse::<u64>().ok())
-            .map_or(1u64 << 32, |threshold| threshold.min(1u64 << 32));
+        #[cfg(feature = "testing")]
+        let sym64_threshold = SYM64_THRESHOLD.get();
+        #[cfg(not(feature = "testing"))]
+        let sym64_threshold = 1u64 << 32;
 
         // If LastMemberHeaderOffset isn't going to fit in a 32-bit varible we need
         // to switch to 64-bit. Note that the file can be larger than 4GB as long as
