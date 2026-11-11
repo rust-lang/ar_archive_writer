@@ -120,6 +120,14 @@ fn get_members(machine_type: MachineTypes) -> Vec<COFFShortExport> {
             name: "?GetValue@?$Wrapper@UA@@@@$$hQEBAHUZ@?$WW@UA@@@@@Z".to_string(),
             ..DEFAULT_EXPORT
         },
+        COFFShortExport {
+            name: "??@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@$$h@".to_string(),
+            ..DEFAULT_EXPORT
+        },
+        COFFShortExport {
+            name: "??@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb@".to_string(),
+            ..DEFAULT_EXPORT
+        },
     ]
 }
 

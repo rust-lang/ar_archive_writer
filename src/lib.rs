@@ -14,6 +14,8 @@ mod math_extras;
 mod object_reader;
 
 pub use archive::ArchiveKind;
+#[cfg(feature = "testing")]
+pub use archive_writer::set_sym64_threshold;
 pub use archive_writer::{NewArchiveMember, write_archive_to_stream};
 pub use coff::MachineTypes;
 pub use coff_import_file::{COFFShortExport, write_import_library};

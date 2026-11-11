@@ -3,7 +3,7 @@
 These are a copy of the relevant LLVM files that were ported to Rust from the
 last time that this project was "synced" with LLVM.
 
-Currently that sync point is 20.1.8, commit [87f0227](https://github.com/llvm/llvm-project/tree/87f0227cb60147a26a1eeb4fb06e3b505e9c7261).
+Currently that sync point is 22.1.8, commit [ca7933e](https://github.com/llvm/llvm-project/tree/ca7933e47d3a3451d81e72ac174dcb5aa28b59d1).
 
 These files were originally located at:
 * `llvm/include/llvm/BinaryFormat/COFF.h`

@@ -15,7 +15,15 @@ include = ["/src", "/LICENSE.txt", "/Readme.md", "/tests"]
 [dependencies]
 object = { version = "0.39", default-features = false, features = ["std", "read"] }
 
+[features]
+testing = []
+
+[[test]]
+name = "sym64"
+required-features = ["testing"]
+
 [dev-dependencies]
+ar_archive_writer = { path = ".", features = ["testing"] }
 cargo-binutils = "0.3.6"
 object = { version = "0.39", default-features = false, features = ["write", "xcoff"] }
 pretty_assertions = "1.4.1"

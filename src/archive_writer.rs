@@ -24,6 +24,19 @@ const BIG_AR_MEM_HDR_SIZE: u64 = {
     std::mem::size_of::<big_archive::BigArMemHdrType>() as u64
 };
 
+#[cfg(feature = "testing")]
+thread_local! {
+    static SYM64_THRESHOLD: std::cell::Cell<u64> = const { std::cell::Cell::new(1 << 32) };
+}
+
+/// Sets the offset at which archives written on the current thread switch to
+/// a 64-bit symbol table, so that tests can trigger the switch without 4 GiB
+/// of data.
+#[cfg(feature = "testing")]
+pub fn set_sym64_threshold(threshold: u64) {
+    SYM64_THRESHOLD.set(threshold);
+}
+
 #[derive(Default)]
 struct SymMap {
     use_ec_map: bool,
@@ -935,20 +948,39 @@ pub fn write_archive_to_stream<'a, W: Write + Seek>(
         // 32-bits can hold. The need for this shift in format is detected by
         // writeArchive. To test this we need to generate a file with a member that
         // has an offset larger than 32-bits but this demands a very slow test. To
-        // speed the test up we use this environment variable to pretend like the
+        // speed the test up we use `set_sym64_threshold` to pretend like the
         // cutoff happens before 32-bits and instead happens at some much smaller
         // value.
-        // FIXME allow lowering the threshold for tests
-        const SYM64_THRESHOLD: u64 = 1 << 32;
+        #[cfg(feature = "testing")]
+        let sym64_threshold = SYM64_THRESHOLD.get();
+        #[cfg(not(feature = "testing"))]
+        let sym64_threshold = 1u64 << 32;
 
         // If LastMemberHeaderOffset isn't going to fit in a 32-bit varible we need
         // to switch to 64-bit. Note that the file can be larger than 4GB as long as
         // the last member starts before the 4GB offset.
-        if maybe_headers_size.unwrap() + last_member_header_offset >= SYM64_THRESHOLD {
-            if kind == ArchiveKind::Darwin {
-                kind = ArchiveKind::Darwin64;
-            } else {
-                kind = ArchiveKind::Gnu64;
+        if maybe_headers_size.unwrap() + last_member_header_offset >= sym64_threshold {
+            match kind {
+                ArchiveKind::Coff => {
+                    // COFF format has no 64-bit version, so we use GNU64 instead.
+                    if !sym_map.map.is_empty() && !sym_map.ec_map.is_empty() {
+                        // Only the COFF format supports the ECSYMBOLS section, so don't use
+                        // GNU64 when two symbol maps are required.
+                        return Err(io::Error::other(
+                            "Archive is too large: ARM64X does not support archives larger than 4GB",
+                        ));
+                    }
+                    // Since this changes the headers, we need to recalculate everything.
+                    return write_archive_to_stream(
+                        w,
+                        new_members,
+                        ArchiveKind::Gnu64,
+                        thin,
+                        is_ec,
+                    );
+                }
+                ArchiveKind::Darwin => kind = ArchiveKind::Darwin64,
+                _ => kind = ArchiveKind::Gnu64,
             }
             maybe_headers_size = None;
         }

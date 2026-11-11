@@ -4,7 +4,10 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 pub fn get_arm64ec_mangled_function_name(name: &str) -> Result<Option<String>, ()> {
-    let first_char = name.chars().next().unwrap();
+    let first_char = name
+        .chars()
+        .next()
+        .expect("get_arm64ec_mangled_function_name requires non-empty name");
     if first_char != '?' {
         // For non-C++ symbols, prefix the name with "#" unless it's already
         // mangled.
@@ -17,6 +20,20 @@ pub fn get_arm64ec_mangled_function_name(name: &str) -> Result<Option<String>, (
     // If the name contains $$h, then it is already mangled.
     if name.contains("$$h") {
         return Ok(None);
+    }
+
+    // Handle MD5 mangled names, which use a slightly different rule from
+    // other C++ manglings.
+    //
+    // A non-Arm64EC function:
+    //
+    // ??@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@
+    //
+    // An Arm64EC function:
+    //
+    // ??@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@$$h@
+    if name.starts_with("??@") && name.ends_with('@') {
+        return Ok(Some(format!("{name}$$h@")));
     }
 
     // Ask the demangler where we should insert "$$h".
@@ -34,6 +51,11 @@ pub fn get_arm64ec_demangled_function_name(name: &str) -> Option<String> {
     }
     if first_char != '?' {
         return None;
+    }
+
+    // MD5 mangled name; see comment in get_arm64ec_mangled_function_name.
+    if name.starts_with("??@") && name.ends_with("@$$h@") {
+        return Some(name[..name.len() - 4].to_string());
     }
 
     // Drop the ARM64EC "$$h" tag.
