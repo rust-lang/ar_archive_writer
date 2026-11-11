@@ -483,9 +483,8 @@ fn next_member_offset(pos: u32, len: usize) -> io::Result<u32> {
 
 fn archive_too_large() -> io::Error {
     io::Error::new(
-        io::ErrorKind::InvalidInput,
-        "archive is too large: the COFF symbol table uses 32-bit member \
-         offsets, so members cannot start past the 4 GiB mark",
+        io::ErrorKind::InvalidData,
+        "archive member offset exceeds 4 GiB COFF format limit",
     )
 }
 
@@ -1248,7 +1247,7 @@ mod tests {
     #[test]
     fn next_member_offset_overflow() {
         let err = next_member_offset(u32::MAX, 1).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
