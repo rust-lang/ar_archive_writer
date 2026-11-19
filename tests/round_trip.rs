@@ -476,7 +476,7 @@ fn xcoff_powerpc() {
             )
             .unwrap();
 
-        round_trip_and_diff("xcoff_powerpc", object, ArchiveKind::Gnu, 0);
+        round_trip_and_diff("xcoff_powerpc", object, ArchiveKind::AixBig, 0);
     }
 }
 
