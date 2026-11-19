@@ -9,6 +9,7 @@ mod archive;
 mod archive_writer;
 mod coff;
 mod coff_import_file;
+mod ebcdic_converter;
 mod mangler;
 mod math_extras;
 mod object_reader;
@@ -20,8 +21,8 @@ pub use archive_writer::{NewArchiveMember, write_archive_to_stream};
 pub use coff::MachineTypes;
 pub use coff_import_file::{COFFShortExport, write_import_library};
 
-pub type GetSymbolsFn =
-    fn(buf: &[u8], f: &mut dyn FnMut(&[u8]) -> std::io::Result<()>) -> std::io::Result<bool>;
+pub type GetSymbolsCallback<'a> = dyn FnMut(&[u8], Option<u32>) -> std::io::Result<()> + 'a;
+pub type GetSymbolsFn = fn(buf: &[u8], f: &mut GetSymbolsCallback<'_>) -> std::io::Result<bool>;
 pub type Is64BitObjectFileFn = fn(buf: &[u8]) -> bool;
 pub type IsECObjectFileFn = fn(buf: &[u8]) -> bool;
 pub type IsAnyArm64CoffFn = fn(buf: &[u8]) -> bool;

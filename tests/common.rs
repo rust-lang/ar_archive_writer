@@ -94,6 +94,7 @@ fn run_llvm_ar(
             ArchiveKind::AixBig => "bigarchive",
             ArchiveKind::Darwin => "darwin",
             ArchiveKind::Gnu => "gnu",
+            ArchiveKind::Zos => "zos",
             _ => panic!("unsupported archive kind: {archive_kind:?}"),
         };
         command.arg(format!("--format={format_arg}"));

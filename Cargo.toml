@@ -13,7 +13,7 @@ include = ["/src", "/LICENSE.txt", "/Readme.md", "/tests"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-object = { version = "0.39", default-features = false, features = ["std", "read"] }
+object = { version = "0.41.0", default-features = false, features = ["std", "read", "goff", "unstable"] }
 
 [features]
 testing = []
@@ -25,7 +25,7 @@ required-features = ["testing"]
 [dev-dependencies]
 ar_archive_writer = { path = ".", features = ["testing"] }
 cargo-binutils = "0.3.6"
-object = { version = "0.39", default-features = false, features = ["write", "xcoff"] }
+object = { version = "0.41.0", default-features = false, features = ["write", "xcoff", "goff", "unstable"] }
 pretty_assertions = "1.4.1"
 
 [lints.rust]

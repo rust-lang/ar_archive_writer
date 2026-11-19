@@ -47,7 +47,7 @@ macro_rules! u32 {
 // Derived from COFFImportFile::printSymbolName and COFFImportFile::symbol_end.
 pub(crate) fn get_short_import_symbol(
     buf: &[u8],
-    f: &mut dyn FnMut(&[u8]) -> Result<()>,
+    f: &mut crate::GetSymbolsCallback<'_>,
 ) -> Result<bool> {
     let mut offset = 0;
     let header = ImportObjectHeader::parse(buf, &mut offset).map_err(Error::other)?;
@@ -65,30 +65,36 @@ pub(crate) fn get_short_import_symbol(
 
     // Import symbol is first.
     const IMP_PREFIX: &[u8] = b"__imp_";
-    f(&IMP_PREFIX
-        .iter()
-        .chain(demangled_name.as_ref())
-        .copied()
-        .collect::<Vec<_>>())?;
+    f(
+        &IMP_PREFIX
+            .iter()
+            .chain(demangled_name.as_ref())
+            .copied()
+            .collect::<Vec<_>>(),
+        None,
+    )?;
 
     // For data, only the import symbol is needed.
-    if header.import_type() == ImportType::Data.into() {
+    if header.import_type() == object::pe::ImportObjectType(ImportType::Data.into()) {
         return Ok(true);
     }
 
     // Next, thunk.
-    f(demangled_name.as_ref())?;
+    f(demangled_name.as_ref(), None)?;
 
     // For Arm64EC, also the EC import symbol and thunk.
     if header.machine.get(object::LittleEndian) == object::pe::IMAGE_FILE_MACHINE_ARM64EC {
         const IMP_PREFIX: &[u8] = b"__imp_aux_";
-        f(&IMP_PREFIX
-            .iter()
-            .chain(demangled_name.as_ref())
-            .copied()
-            .collect::<Vec<_>>())?;
+        f(
+            &IMP_PREFIX
+                .iter()
+                .chain(demangled_name.as_ref())
+                .copied()
+                .collect::<Vec<_>>(),
+            None,
+        )?;
 
-        f(name)?;
+        f(name, None)?;
     }
 
     Ok(true)
@@ -156,14 +162,17 @@ fn apply_name_type(import_type: ImportNameType, name: &str) -> &str {
     }
 }
 
-fn get_img_rel_relocation(machine: MachineTypes) -> object::U16<object::LittleEndian> {
-    u16!(match machine {
-        MachineTypes::AMD64 => IMAGE_REL_AMD64_ADDR32NB,
-        MachineTypes::ARMNT => IMAGE_REL_ARM_ADDR32NB,
-        MachineTypes::ARM64 | MachineTypes::ARM64EC | MachineTypes::ARM64X =>
-            IMAGE_REL_ARM64_ADDR32NB,
-        MachineTypes::I386 => IMAGE_REL_I386_DIR32NB,
-    })
+fn get_img_rel_relocation(
+    machine: MachineTypes,
+) -> object::U16<object::LittleEndian, object::pe::RelocationType> {
+    match machine {
+        MachineTypes::AMD64 => IMAGE_REL_AMD64_ADDR32NB.into(),
+        MachineTypes::ARMNT => IMAGE_REL_ARM_ADDR32NB.into(),
+        MachineTypes::ARM64 | MachineTypes::ARM64EC | MachineTypes::ARM64X => {
+            IMAGE_REL_ARM64_ADDR32NB.into()
+        }
+        MachineTypes::I386 => IMAGE_REL_I386_DIR32NB.into(),
+    }
 }
 
 fn write_string_table(b: &mut Vec<u8>, strings: &[&[u8]]) -> Result<()> {
@@ -309,7 +318,7 @@ impl<'a> ObjectFactory<'a> {
             number_of_symbols: u32!(NUMBER_OF_SYMBOLS.try_into().unwrap()),
             size_of_optional_header: u16!(0),
             characteristics: u16!(if self.is_64_bit() {
-                0
+                object::pe::FileFlags(0)
             } else {
                 IMAGE_FILE_32BIT_MACHINE
             }),
@@ -424,7 +433,7 @@ impl<'a> ObjectFactory<'a> {
                 name: [0; 8],
                 value: u32!(0),
                 section_number: u16!(1),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_EXTERNAL,
                 number_of_aux_symbols: 0,
             },
@@ -432,7 +441,7 @@ impl<'a> ObjectFactory<'a> {
                 name: *b".idata$2",
                 value: u32!(0),
                 section_number: u16!(1),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_SECTION,
                 number_of_aux_symbols: 0,
             },
@@ -440,7 +449,7 @@ impl<'a> ObjectFactory<'a> {
                 name: *b".idata$6",
                 value: u32!(0),
                 section_number: u16!(2),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_STATIC,
                 number_of_aux_symbols: 0,
             },
@@ -448,7 +457,7 @@ impl<'a> ObjectFactory<'a> {
                 name: *b".idata$4",
                 value: u32!(0),
                 section_number: u16!(0),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_SECTION,
                 number_of_aux_symbols: 0,
             },
@@ -456,7 +465,7 @@ impl<'a> ObjectFactory<'a> {
                 name: *b".idata$5",
                 value: u32!(0),
                 section_number: u16!(0),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_SECTION,
                 number_of_aux_symbols: 0,
             },
@@ -464,7 +473,7 @@ impl<'a> ObjectFactory<'a> {
                 name: [0; 8],
                 value: u32!(0),
                 section_number: u16!(0),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_EXTERNAL,
                 number_of_aux_symbols: 0,
             },
@@ -472,7 +481,7 @@ impl<'a> ObjectFactory<'a> {
                 name: [0; 8],
                 value: u32!(0),
                 section_number: u16!(0),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_EXTERNAL,
                 number_of_aux_symbols: 0,
             },
@@ -531,7 +540,7 @@ impl<'a> ObjectFactory<'a> {
             number_of_symbols: u32!(NUMBER_OF_SYMBOLS.try_into().unwrap()),
             size_of_optional_header: u16!(0),
             characteristics: u16!(if self.is_64_bit() {
-                0
+                object::pe::FileFlags(0)
             } else {
                 IMAGE_FILE_32BIT_MACHINE
             }),
@@ -578,7 +587,7 @@ impl<'a> ObjectFactory<'a> {
             name: [0; 8],
             value: u32!(0),
             section_number: u16!(1),
-            typ: u16!(0),
+            typ: u16!(object::pe::SymbolType(0)),
             storage_class: IMAGE_SYM_CLASS_EXTERNAL,
             number_of_aux_symbols: 0,
         }];
@@ -618,7 +627,7 @@ impl<'a> ObjectFactory<'a> {
             number_of_symbols: u32!(NUMBER_OF_SYMBOLS.try_into().unwrap()),
             size_of_optional_header: u16!(0),
             characteristics: u16!(if self.is_64_bit() {
-                0
+                object::pe::FileFlags(0)
             } else {
                 IMAGE_FILE_32BIT_MACHINE
             }),
@@ -691,7 +700,7 @@ impl<'a> ObjectFactory<'a> {
             name: [0; 8],
             value: u32!(0),
             section_number: u16!(1),
-            typ: u16!(0),
+            typ: u16!(object::pe::SymbolType(0)),
             storage_class: IMAGE_SYM_CLASS_EXTERNAL,
             number_of_aux_symbols: 0,
         }];
@@ -729,14 +738,16 @@ impl<'a> ObjectFactory<'a> {
 
         // Write short import library.
         let imp = ImportObjectHeader {
-            sig1: u16!(0),
+            sig1: u16!(object::pe::Machine(0)),
             sig2: u16!(0xFFFF),
             version: u16!(0),
             machine: u16!(machine.into()),
             time_date_stamp: u32!(0),
             size_of_data: u32!(imp_size.try_into().unwrap()),
             ordinal_or_hint: u16!(ordinal),
-            name_type: u16!((u16::from(name_type) << 2) | u16::from(import_type)),
+            name_type: u16!(object::pe::ImportObjectFlags(
+                (u16::from(name_type) << 2) | u16::from(import_type)
+            )),
         };
         buf.write_all(bytes_of(&imp))?;
 
@@ -782,7 +793,7 @@ impl<'a> ObjectFactory<'a> {
             ),
             number_of_symbols: u32!(NUMBER_OF_SYMBOLS.try_into().unwrap()),
             size_of_optional_header: u16!(0),
-            characteristics: u16!(0),
+            characteristics: u16!(object::pe::FileFlags(0)),
         };
         buffer.write_all(bytes_of(&header))?;
 
@@ -807,7 +818,7 @@ impl<'a> ObjectFactory<'a> {
                 name: *b"@comp.id",
                 value: u32!(0),
                 section_number: u16!(0xFFFF),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_STATIC,
                 number_of_aux_symbols: 0,
             },
@@ -815,7 +826,7 @@ impl<'a> ObjectFactory<'a> {
                 name: *b"@feat.00",
                 value: u32!(0),
                 section_number: u16!(0xFFFF),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_STATIC,
                 number_of_aux_symbols: 0,
             },
@@ -823,7 +834,7 @@ impl<'a> ObjectFactory<'a> {
                 name: [0; 8],
                 value: u32!(0),
                 section_number: u16!(0),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_EXTERNAL,
                 number_of_aux_symbols: 0,
             },
@@ -831,15 +842,24 @@ impl<'a> ObjectFactory<'a> {
                 name: [0; 8],
                 value: u32!(0),
                 section_number: u16!(0),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_WEAK_EXTERNAL,
                 number_of_aux_symbols: 1,
             },
             ImageSymbol {
-                name: [2, 0, 0, 0, IMAGE_WEAK_EXTERN_SEARCH_ALIAS as u8, 0, 0, 0],
+                name: [
+                    2,
+                    0,
+                    0,
+                    0,
+                    IMAGE_WEAK_EXTERN_SEARCH_ALIAS.0.try_into().unwrap(),
+                    0,
+                    0,
+                    0,
+                ],
                 value: u32!(0),
                 section_number: u16!(0),
-                typ: u16!(0),
+                typ: u16!(object::pe::SymbolType(0)),
                 storage_class: IMAGE_SYM_CLASS_NULL,
                 number_of_aux_symbols: 0,
             },

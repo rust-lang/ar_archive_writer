@@ -17,6 +17,20 @@ fn round_trip_and_diff(
     archive_kind: ArchiveKind,
     trim_output_bytes: usize,
 ) {
+    // The archive headers can be different for short vs long member names, so
+    // try testing both variations.
+    for name in ["input.o", "long_input_file_name.o"] {
+        round_trip_and_diff_with_name(test_name, &object, archive_kind, trim_output_bytes, name);
+    }
+}
+
+fn round_trip_and_diff_with_name(
+    test_name: &str,
+    object: &write::Object<'_>,
+    archive_kind: ArchiveKind,
+    trim_output_bytes: usize,
+    name: &str,
+) {
     let tmpdir = common::create_tmp_dir(test_name);
     let input_bytes = object.write().unwrap();
     let is_ec = object.sub_architecture() == Some(SubArchitecture::Arm64EC);
@@ -25,7 +39,7 @@ fn round_trip_and_diff(
     let output_archive_bytes = common::create_archive_with_ar_archive_writer(
         &tmpdir,
         archive_kind,
-        [("input.o", input_bytes.as_slice())],
+        [(name, input_bytes.as_slice())],
         false,
         is_ec,
     );
@@ -34,14 +48,14 @@ fn round_trip_and_diff(
     let output_llvm_ar_bytes = common::create_archive_with_llvm_ar(
         &tmpdir,
         archive_kind,
-        [("input.o", input_bytes.as_slice())],
+        [(name, input_bytes.as_slice())],
         false,
         is_ec,
     );
     assert_eq!(
         output_archive_bytes, output_llvm_ar_bytes,
-        "Comparing ar_archive_writer to llvm-ar. Test case: build {:?} for {:?}",
-        archive_kind, object
+        "Comparing ar_archive_writer to llvm-ar. Test case: build {:?} for {:?} with member name: {}",
+        archive_kind, object, name
     );
 
     // Read the archive and member using object and diff with original data.
@@ -50,8 +64,8 @@ fn round_trip_and_diff(
             read::archive::ArchiveFile::parse(output_archive_bytes.as_slice()).unwrap();
         let mut members = output_archive.members();
         let output_member = members.next().unwrap().unwrap();
-        if archive_kind != ArchiveKind::Coff {
-            assert_eq!(output_member.name(), b"input.o");
+        if archive_kind != ArchiveKind::Coff && archive_kind != ArchiveKind::Zos {
+            assert_eq!(output_member.name(), name.as_bytes());
         }
         let output_bytes = output_member.data(output_archive_bytes.as_slice()).unwrap();
 
@@ -60,8 +74,8 @@ fn round_trip_and_diff(
 
         assert_eq!(
             &input_bytes, output_bytes,
-            "Comparing object after round-trip. Test case: build {:?} for {:?}",
-            archive_kind, object
+            "Comparing object after round-trip. Test case: build {:?} for {:?} with member name: {}",
+            archive_kind, object, name
         );
     }
 }
@@ -462,6 +476,47 @@ fn xcoff_powerpc() {
             )
             .unwrap();
 
-        round_trip_and_diff("xcoff_powerpc", object, ArchiveKind::Gnu, 0);
+        round_trip_and_diff("xcoff_powerpc", object, ArchiveKind::AixBig, 0);
+    }
+}
+
+#[test]
+fn goff_s390x() {
+    for arch in [Architecture::S390x] {
+        let mut object = write::Object::new(BinaryFormat::Goff, arch, Endianness::Big);
+
+        let text = object.section_id(write::StandardSection::Text);
+        object.append_section_data(text, &[1; 30], 4);
+
+        let func1_offset = object.append_section_data(text, &[1; 30], 4);
+        assert_eq!(func1_offset, 32);
+        let func1_symbol = object.add_symbol(write::Symbol {
+            name: b"func1".to_vec(),
+            value: func1_offset,
+            size: 32,
+            kind: SymbolKind::Text,
+            scope: SymbolScope::Linkage,
+            weak: false,
+            section: write::SymbolSection::Section(text),
+            flags: SymbolFlags::None,
+        });
+
+        object
+            .add_relocation(
+                text,
+                write::Relocation {
+                    offset: 8,
+                    symbol: func1_symbol,
+                    addend: 0,
+                    flags: RelocationFlags::Generic {
+                        kind: RelocationKind::Absolute,
+                        encoding: RelocationEncoding::Generic,
+                        size: 64,
+                    },
+                },
+            )
+            .unwrap();
+
+        round_trip_and_diff("goff_s390x", object, ArchiveKind::Zos, 0);
     }
 }

@@ -13,6 +13,7 @@ use crate::ObjectReader;
 use crate::alignment::*;
 use crate::archive::*;
 use crate::coff_import_file;
+use crate::ebcdic_converter::convert_to_ebcdic;
 use crate::math_extras::align_to_power_of2;
 
 const BIG_AR_MEM_HDR_SIZE: u64 = {
@@ -84,9 +85,17 @@ fn is_coff_archive(kind: ArchiveKind) -> bool {
     kind == ArchiveKind::Coff
 }
 
+fn is_zos_archive(kind: ArchiveKind) -> bool {
+    kind == ArchiveKind::Zos
+}
+
 fn is_bsd_like(kind: ArchiveKind) -> bool {
     match kind {
-        ArchiveKind::Gnu | ArchiveKind::Gnu64 | ArchiveKind::AixBig | ArchiveKind::Coff => false,
+        ArchiveKind::Gnu
+        | ArchiveKind::Gnu64
+        | ArchiveKind::AixBig
+        | ArchiveKind::Coff
+        | ArchiveKind::Zos => false,
         ArchiveKind::Bsd | ArchiveKind::Darwin | ArchiveKind::Darwin64 => true,
     }
 }
@@ -150,6 +159,39 @@ fn print_bsd_member_header<W: Write>(
     )
 }
 
+fn print_zos_member_header<W: Write>(
+    w: &mut W,
+    name: &str,
+    mtime: u64,
+    uid: u32,
+    gid: u32,
+    perms: u32,
+    size: u64,
+) -> io::Result<()> {
+    let mut buffer: Vec<u8> = Vec::new();
+    if name.len() <= 16 {
+        write!(&mut buffer, "{:<16}", name)?;
+        print_rest_of_member_header(&mut buffer, mtime, uid, gid, perms, size)?
+    } else {
+        // z/OS ar stores the exact name length inline with no extra alignment
+        // padding, unlike the BSD format which pads to an 8-byte boundary.
+        let name_length = name.len();
+        write!(&mut buffer, "#1/{name_length:<13}")?;
+        print_rest_of_member_header(
+            &mut buffer,
+            mtime,
+            uid,
+            gid,
+            perms,
+            u64::try_from(name.len()).unwrap() + size,
+        )?;
+        write!(&mut buffer, "{name}")?
+    }
+    convert_to_ebcdic(&mut buffer)?;
+    w.write_all(&buffer)?;
+    Ok(())
+}
+
 fn print_big_archive_member_header<W: Write>(
     w: &mut W,
     name: &str,
@@ -193,7 +235,11 @@ fn use_string_table(thin: bool, name: &str) -> bool {
 
 fn is_64bit_kind(kind: ArchiveKind) -> bool {
     match kind {
-        ArchiveKind::Gnu | ArchiveKind::Bsd | ArchiveKind::Darwin | ArchiveKind::Coff => false,
+        ArchiveKind::Gnu
+        | ArchiveKind::Bsd
+        | ArchiveKind::Darwin
+        | ArchiveKind::Coff
+        | ArchiveKind::Zos => false,
         ArchiveKind::AixBig | ArchiveKind::Darwin64 | ArchiveKind::Gnu64 => true,
     }
 }
@@ -211,6 +257,10 @@ fn print_member_header<'m, W: Write, T: Write + Seek>(
 ) -> io::Result<()> {
     if is_bsd_like(kind) {
         return print_bsd_member_header(w, pos, &m.member_name, mtime, m.uid, m.gid, m.perms, size);
+    }
+
+    if is_zos_archive(kind) {
+        return print_zos_member_header(w, &m.member_name, mtime, m.uid, m.gid, m.perms, size);
     }
 
     if !use_string_table(thin, &m.member_name) {
@@ -246,8 +296,13 @@ fn print_member_header<'m, W: Write, T: Write + Seek>(
     print_rest_of_member_header(w, mtime, m.uid, m.gid, m.perms, size)
 }
 
+struct SymbolData {
+    string_offset: u64,
+    maybe_flags: Option<u32>,
+}
+
 struct MemberData<'a> {
-    symbols: Vec<u64>,
+    symbols: Vec<SymbolData>,
     header: Vec<u8>,
     data: &'a [u8],
     padding: &'static [u8],
@@ -305,7 +360,7 @@ fn compute_symbol_table_size_and_pad(
         "Unsupported offset_size"
     );
     let mut size = offset_size; // Number of entries
-    if is_bsd_like(kind) {
+    if is_bsd_like(kind) || is_zos_archive(kind) {
         size += num_syms * offset_size * 2; // Table
     } else {
         size += num_syms * offset_size; // Table
@@ -369,6 +424,9 @@ fn write_symbol_table_header<W: Write + Seek>(
         };
         let pos = w.stream_position()?;
         print_bsd_member_header(w, pos, name, now(), 0, 0, 0, size)
+    } else if is_zos_archive(kind) {
+        let name = "__.SYMDEF";
+        print_zos_member_header(w, name, now(), 0, 0, 0, size)
     } else if is_aix_big_archive(kind) {
         print_big_archive_member_header(
             w,
@@ -443,7 +501,14 @@ fn write_symbol_table<W: Write + Seek>(
         offset_size,
         string_table.len().try_into().unwrap(),
     );
-    write_symbol_table_header(w, kind, size, prev_member_offset, next_member_offset)?;
+    let header_size = if is_zos_archive(kind) {
+        // Padding size is not included in the Size field of the z/OS symbol table
+        // header.
+        size - pad
+    } else {
+        size
+    };
+    write_symbol_table_header(w, kind, header_size, prev_member_offset, next_member_offset)?;
 
     if is_bsd_like(kind) {
         print_n_bits(w, kind, num_syms * 2 * offset_size)?;
@@ -461,11 +526,21 @@ fn write_symbol_table<W: Write + Seek>(
             }
         }
 
-        for &string_offset in &m.symbols {
+        for SymbolData {
+            string_offset,
+            maybe_flags,
+        } in &m.symbols
+        {
             if is_bsd_like(kind) {
-                print_n_bits(w, kind, string_offset)?;
+                print_n_bits(w, kind, *string_offset)?;
             }
             print_n_bits(w, kind, pos)?; // member offset
+            if is_zos_archive(kind) {
+                match maybe_flags {
+                    Some(flags) => print_n_bits(w, kind, (*flags).into())?,
+                    None => print_n_bits(w, kind, 0)?, // pad with zero for non-GOFF symbols (e.g. IR)
+                }
+            }
         }
         pos += u64::try_from(m.header.len() + m.data.len() + m.padding.len()).unwrap();
     }
@@ -475,7 +550,13 @@ fn write_symbol_table<W: Write + Seek>(
         print_n_bits(w, kind, u64::try_from(string_table.len()).unwrap())?;
     }
 
-    w.write_all(string_table)?;
+    if is_zos_archive(kind) {
+        let mut ebcdic_string_table: Vec<u8> = string_table.into();
+        convert_to_ebcdic(&mut ebcdic_string_table)?;
+        w.write_all(&ebcdic_string_table)?
+    } else {
+        w.write_all(string_table)?;
+    }
 
     write!(
         w,
@@ -592,8 +673,8 @@ fn write_symbols(
     sym_names: &mut Cursor<Vec<u8>>,
     sym_map: &mut Option<&mut SymMap>,
     object_reader: &ObjectReader,
-) -> io::Result<Vec<u64>> {
-    let mut ret = vec![];
+) -> io::Result<Vec<SymbolData>> {
+    let mut ret: Vec<SymbolData> = Vec::new();
 
     let mut is_using_map = false;
     let (mut map, mut ec_map) = if let Some(sym_map) = sym_map {
@@ -610,31 +691,37 @@ fn write_symbols(
         (None, None)
     };
 
-    (object_reader.get_symbols)(obj, &mut |name| {
+    (object_reader.get_symbols)(obj, &mut |name_bytes, maybe_flags| {
         if let Some(map) = &mut map {
             let index = u16::try_from(index).unwrap();
-            let entry = map.entry(name.to_vec().into_boxed_slice());
+            let entry = map.entry(name_bytes.to_vec().into_boxed_slice());
             if matches!(entry, std::collections::btree_map::Entry::Occupied(_)) {
                 return Ok(()); // ignore duplicated symbol
             }
             entry.or_insert(index);
 
             if is_using_map {
-                ret.push(sym_names.stream_position()?);
-                sym_names.write_all(name)?;
+                ret.push(SymbolData {
+                    string_offset: sym_names.stream_position()?,
+                    maybe_flags,
+                });
+                sym_names.write_all(name_bytes)?;
                 sym_names.write_all(&[0])?;
 
                 // If EC is enabled, then the import descriptors are NOT put into EC
                 // objects so we need to copy them to the EC map manually.
                 if let Some(ec_map) = &mut ec_map
-                    && is_import_descriptor(name)
+                    && is_import_descriptor(name_bytes)
                 {
-                    ec_map.insert(name.to_vec().into_boxed_slice(), index);
+                    ec_map.insert(name_bytes.to_vec().into_boxed_slice(), index);
                 }
             }
         } else {
-            ret.push(sym_names.stream_position()?);
-            sym_names.write_all(name)?;
+            ret.push(SymbolData {
+                string_offset: sym_names.stream_position()?,
+                maybe_flags,
+            });
+            sym_names.write_all(name_bytes)?;
             sym_names.write_all(&[0])?;
         }
         Ok(())
@@ -752,7 +839,8 @@ fn compute_member_data<'a, S: Write + Seek>(
     let mut prev_offset = 0;
     let mut next_mem_head_pad_size = 0;
     let mut index = 0;
-    for m in new_members {
+    let mut iter = new_members.iter().peekable();
+    while let Some(m) = iter.next() {
         let mut header = Vec::new();
 
         let buf = m.buf.as_ref().as_ref();
@@ -769,8 +857,16 @@ fn compute_member_data<'a, S: Write + Seek>(
         } else {
             0
         };
-        let tail_padding =
-            offset_to_alignment(u64::try_from(data.len()).unwrap() + member_padding, 2);
+        let padding_base = if is_zos_archive(kind) && m.member_name.len() > 16 {
+            // z/OS stores long member names inline using their exact byte length.
+            // Include the inline name when computing alignment.
+            u64::try_from(data.len()).unwrap()
+                + member_padding
+                + u64::try_from(m.member_name.len()).unwrap()
+        } else {
+            u64::try_from(data.len()).unwrap() + member_padding
+        };
+        let tail_padding = offset_to_alignment(padding_base, 2);
         let padding = &PADDING_DATA[..usize::try_from(member_padding + tail_padding).unwrap()];
 
         let mtime = if unique_timestamps {
@@ -851,8 +947,21 @@ fn compute_member_data<'a, S: Write + Seek>(
             )?;
         }
 
-        let symbols = write_symbols(buf, index, sym_names, sym_map, m.object_reader)?;
+        let mut symbols = write_symbols(buf, index, sym_names, sym_map, m.object_reader)?;
         has_object = true;
+
+        if is_zos_archive(kind) && iter.peek().is_none() && sym_names.stream_position()? == 0 {
+            // On z/OS, when there are no symbols, add a dummy blank symbol
+            // into the symbol table. This is done since the z/OS binder:
+            //   - emits an error if there is no symbol table in the archive
+            //   - emits an error if the symbol table has 0 symbols
+            //   - should not find any references to a blank symbol
+            symbols.push(SymbolData {
+                string_offset: 0,
+                maybe_flags: None,
+            });
+            sym_names.write_all(b" \0")?;
+        }
 
         pos += u64::try_from(header.len() + data.len() + padding.len()).unwrap();
         ret.push(MemberData {
@@ -868,7 +977,11 @@ fn compute_member_data<'a, S: Write + Seek>(
     // If there are no symbols, emit an empty symbol table, to satisfy Solaris
     // tools, older versions of which expect a symbol table in a non-empty
     // archive, regardless of whether there are any symbols in it.
-    if has_object && sym_names.stream_position()? == 0 && !is_coff_archive(kind) {
+    if has_object
+        && sym_names.stream_position()? == 0
+        && !is_coff_archive(kind)
+        && !is_zos_archive(kind)
+    {
         write!(sym_names, "\0\0\0")?;
     }
 
@@ -1010,6 +1123,8 @@ pub fn write_archive_to_stream<'a, W: Write + Seek>(
         write!(w, "!<thin>\n")?;
     } else if is_aix_big_archive(kind) {
         write!(w, "<bigaf>\n")?;
+    } else if is_zos_archive(kind) {
+        w.write_all(b"\x5A\x4C\x81\x99\x83\x88\x6E\x15")?; // "!<arch>\n" in EBCDIC
     } else {
         write!(w, "!<arch>\n")?;
     }

@@ -7,12 +7,13 @@
 
 use std::{io, mem::offset_of};
 
+use object::ObjectSymbolTable;
 use object::{Object, ObjectSymbol, pe::ImportObjectHeader, xcoff};
 
 use crate::coff::is_any_arm64;
 use crate::coff_import_file;
 
-fn is_archive_symbol(sym: &object::read::Symbol<'_, '_>) -> bool {
+fn is_archive_symbol<'a>(sym: &impl object::ObjectSymbol<'a>) -> bool {
     // FIXME Use a better equivalent of LLVM's SymbolRef::SF_FormatSpecific
     if sym.kind() == object::SymbolKind::File || sym.kind() == object::SymbolKind::Section {
         return false;
@@ -26,19 +27,80 @@ fn is_archive_symbol(sym: &object::read::Symbol<'_, '_>) -> bool {
     true
 }
 
+// Convert GOFF symbol flags to the flag format used in the archive symbol table
+fn compute_zos_archive_flags(
+    sym: &object::read::goff::GoffSymbol<'_, '_>,
+    file: &object::read::goff::GoffFile<'_>,
+) -> u32 {
+    // flag values in big endian byte order
+    // bits 29–31
+    const IS_64BIT: u32 = 0x0000_0004;
+    const XPLINK: u32 = 0x0000_0002;
+    const PR: u32 = 0x0000_0001;
+
+    let mut flags = 0;
+
+    let object::SymbolFlags::Goff {
+        behavioral_attributes,
+        ..
+    } = sym.flags()
+    else {
+        panic!("GOFF flags not found");
+    };
+
+    // Bit 2 (0x4): 64-bit — AMODE is only defined for LD/ER records.
+    if behavioral_attributes.amode() == object::goff::AMODE_64 {
+        flags |= IS_64BIT;
+    }
+
+    // Bit 1 (0x2): XPLink — LinkageType is GOFF_LINKAGE_XPLINK.
+    if behavioral_attributes.is_xplink() {
+        flags |= XPLINK;
+    }
+
+    // Bit 0 (0x1): Writable Static Area — the symbol's parent ED has NameSpace
+    // ESD_NS_Parts.
+    let parent = file
+        .symbol_table()
+        .expect("GOFF file has no symbol table")
+        .symbol_by_index(sym.goff_parent_esdid())
+        .expect("parent ESDID not found");
+    let object::SymbolFlags::Goff { namespace, .. } = parent.flags() else {
+        panic!("GOFF flags not found");
+    };
+
+    if namespace == object::goff::ESD_NS_PARTS {
+        flags |= PR;
+    }
+
+    flags
+}
+
 pub fn get_native_object_symbols(
     buf: &[u8],
-    f: &mut dyn FnMut(&[u8]) -> io::Result<()>,
+    f: &mut crate::GetSymbolsCallback<'_>,
 ) -> io::Result<bool> {
     // FIXME match what LLVM does
 
     match object::File::parse(buf) {
+        Ok(object::File::Goff(goff_file)) => {
+            for sym in goff_file.symbols() {
+                if !is_archive_symbol(&sym) {
+                    continue;
+                }
+                f(
+                    &sym.decoded_name_bytes().expect("Expected GOFF symbol name"),
+                    Some(compute_zos_archive_flags(&sym, &goff_file)),
+                )?;
+            }
+            Ok(true)
+        }
         Ok(file) => {
             for sym in file.symbols() {
                 if !is_archive_symbol(&sym) {
                     continue;
                 }
-                f(sym.name_bytes().expect("FIXME"))?;
+                f(sym.name_bytes().expect("FIXME"), None)?;
             }
             Ok(true)
         }
@@ -57,7 +119,8 @@ pub fn get_native_object_symbols(
 pub fn is_ec_object(obj: &[u8]) -> bool {
     match object::FileKind::parse(obj) {
         Ok(object::FileKind::Coff) => {
-            u16::from_le_bytes([obj[0], obj[1]]) != object::pe::IMAGE_FILE_MACHINE_ARM64
+            object::pe::Machine(u16::from_le_bytes([obj[0], obj[1]]))
+                != object::pe::IMAGE_FILE_MACHINE_ARM64
         }
         Ok(object::FileKind::CoffImport) => {
             // COFF Import Header is:
@@ -65,7 +128,8 @@ pub fn is_ec_object(obj: &[u8]) -> bool {
             // sig2: u16
             // version: u16
             // machine: u16
-            u16::from_le_bytes([obj[6], obj[7]]) != object::pe::IMAGE_FILE_MACHINE_ARM64
+            object::pe::Machine(u16::from_le_bytes([obj[6], obj[7]]))
+                != object::pe::IMAGE_FILE_MACHINE_ARM64
         }
         _ => false,
     }

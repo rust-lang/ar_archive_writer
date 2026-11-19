@@ -15,6 +15,7 @@ pub enum ArchiveKind {
     Darwin64,
     Coff,
     AixBig,
+    Zos,
 }
 
 pub(crate) mod big_archive {

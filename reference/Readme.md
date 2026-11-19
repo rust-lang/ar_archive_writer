@@ -3,10 +3,11 @@
 These are a copy of the relevant LLVM files that were ported to Rust from the
 last time that this project was "synced" with LLVM.
 
-Currently that sync point is 22.1.8, commit [ca7933e](https://github.com/llvm/llvm-project/tree/ca7933e47d3a3451d81e72ac174dcb5aa28b59d1).
+Currently that sync point is 23.1.6, commit [5b10d2d](https://github.com/llvm/llvm-project/tree/5b10d2d74929eae78912771222c9855af97496f4).
 
 These files were originally located at:
 * `llvm/include/llvm/BinaryFormat/COFF.h`
+* `llvm/include/llvm/BinaryFormat/GOFF.h`
 * `llvm/include/llvm/Object/Archive.h`
 * `llvm/include/llvm/Object/ArchiveWriter.h`
 * `llvm/include/llvm/Object/COFFImportFile.h`
@@ -16,6 +17,7 @@ These files were originally located at:
 * `llvm/lib/Object/ArchiveWriter.cpp`
 * `llvm/lib/Object/COFFImportFile.cpp`
 * `llvm/unittests/IR/ManglerTest.cpp`
+* `llvm/lib/Support/ConvertEBCDIC.cpp`
 
 When syncing, make sure to update these files and the commit above.
 
