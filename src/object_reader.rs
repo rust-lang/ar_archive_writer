@@ -78,7 +78,7 @@ fn compute_zos_archive_flags(
 
 pub fn get_native_object_symbols(
     buf: &[u8],
-    f: &mut dyn FnMut(&[u8], Option<u32>) -> io::Result<()>,
+    f: &mut crate::GetSymbolsCallback<'_>,
 ) -> io::Result<bool> {
     // FIXME match what LLVM does
 
